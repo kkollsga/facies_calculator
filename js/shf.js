@@ -270,8 +270,13 @@ function _renderShfPlot(points) {
     }, svg);
   }
 
-  // SE-equation overlay placeholder: a future session will draw the fit
-  // curve here using shfState.equation (Brooks-Corey λ, J-function, etc).
+  // J-function overlay (see js/jfn.js). When an equation is active, draws
+  // 10 Sw vs HAFWL curves at log-spaced sqrt(k/φ) values from the data
+  // range. Curves render on top of points so the model is visible against
+  // the data cloud.
+  if (typeof jfnRenderCurves === 'function') {
+    jfnRenderCurves({ svg, xScale, yScale, xLo, xHi, yLo, yHi, points });
+  }
 
   _renderShfColorBar(_colorMetricLabel(colorBy), cMin, cMax);
 }

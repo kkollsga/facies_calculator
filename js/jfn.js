@@ -8,15 +8,17 @@
 // equation plus an "Add J-function" pill at the end.
 //
 // Interaction:
-//   * Click a pill → it becomes the active equation AND the editor expands.
-//   * Click the active+expanded pill again → editor collapses.
-//   * Click anywhere outside the bar → editor collapses to pills.
+//   * Click an inactive pill → it becomes the active equation. The SHF plot
+//     gains a 10-curve overlay (one curve per evenly log-spaced sqrt(k/φ)
+//     value taken from the data range).
+//   * Click the active pill → editor expands. Click it again → collapses.
+//   * Click anywhere outside the bar → editor collapses (but the equation
+//     stays active so its curves remain on the plot).
 //
-// The editor exposes sliders for the four free coefficients (a, b, c, d),
-// a "Show constants" toggle that reveals sliders for the locked physical
-// constants (γ, γpc, ω, Δρ, g, fpc, κ, λ), an editable equation name, a
-// trash button, and Save / Reset actions. Save commits the current draft
-// to localStorage; Reset reverts the draft to the last saved values.
+// While the editor is open, dragging coefficient sliders updates the plot
+// live. Save commits the current draft to localStorage; Reset reverts the
+// draft to the last saved values; collapsing without saving discards the
+// draft (the plot snaps back to the saved curve).
 
 const JFN_STORAGE_KEY = 'fzp_jfunctions_v1';
 
@@ -78,6 +80,13 @@ function _jfnPersist() {
   } catch (e) { /* storage full / disabled — fail silently */ }
 }
 
+// All state mutations route through this so the SHF plot's curve overlay
+// stays in lockstep with the active/draft params. refreshShfPanel is a
+// no-op when the SHF panel is hidden.
+function _jfnRefreshPlot() {
+  if (typeof refreshShfPanel === 'function') refreshShfPanel();
+}
+
 function initJfnPanel() {
   jfnState.list = _jfnLoadFromStorage();
   if (jfnState.activeId && !_jfnFind(jfnState.activeId)) jfnState.activeId = null;
@@ -86,6 +95,7 @@ function initJfnPanel() {
     jfnState.draft = null;
   }
   renderJfnBar();
+  _jfnRefreshPlot();
 }
 
 function _jfnAdd() {
@@ -95,12 +105,15 @@ function _jfnAdd() {
     params: _jfnDefaultParams(),
   };
   jfnState.list.push(j);
+  // New equations land active AND expanded — the user just hit Add,
+  // they want to start tweaking immediately.
   jfnState.activeId = j.id;
   jfnState.expandedId = j.id;
   jfnState.showConstants = false;
   jfnState.draft = { name: j.name, params: { ...j.params } };
   _jfnPersist();
   renderJfnBar();
+  _jfnRefreshPlot();
 }
 
 function _jfnDelete(id) {
@@ -114,6 +127,7 @@ function _jfnDelete(id) {
   }
   _jfnPersist();
   renderJfnBar();
+  _jfnRefreshPlot();
 }
 
 function _jfnSaveDraft() {
@@ -124,6 +138,9 @@ function _jfnSaveDraft() {
   j.params = { ...jfnState.draft.params };
   _jfnPersist();
   renderJfnBar();
+  // Plot was already showing the draft, so this is a no-op visually,
+  // but kept for symmetry with the other mutators.
+  _jfnRefreshPlot();
 }
 
 function _jfnResetDraft() {
@@ -132,21 +149,31 @@ function _jfnResetDraft() {
   if (!j) return;
   jfnState.draft = { name: j.name, params: { ...j.params } };
   renderJfnBar();
+  _jfnRefreshPlot();
 }
 
+// Pill click is a two-stage interaction:
+//   1) Click an inactive pill → activate (curves appear on the plot).
+//   2) Click the active pill → toggle the editor open/closed.
+// Activating a different pill while another is expanded drops the editor.
 function _jfnSelect(id) {
-  if (jfnState.activeId === id && jfnState.expandedId === id) {
-    // Click on the active+expanded pill collapses the editor.
+  if (jfnState.activeId !== id) {
+    jfnState.activeId = id;
+    jfnState.expandedId = null;
+    jfnState.draft = null;
+  } else if (jfnState.expandedId === id) {
+    // active + expanded → collapse
     jfnState.expandedId = null;
     jfnState.draft = null;
   } else {
-    jfnState.activeId = id;
+    // active + collapsed → expand
     jfnState.expandedId = id;
     const j = _jfnFind(id);
     jfnState.draft = j ? { name: j.name, params: { ...j.params } } : null;
     jfnState.showConstants = false;
   }
   renderJfnBar();
+  _jfnRefreshPlot();
 }
 
 function _jfnCollapse() {
@@ -154,6 +181,8 @@ function _jfnCollapse() {
   jfnState.expandedId = null;
   jfnState.draft = null;
   renderJfnBar();
+  // Plot was tracking the draft; on collapse it reverts to saved params.
+  _jfnRefreshPlot();
 }
 
 function renderJfnBar() {
@@ -328,11 +357,16 @@ function _buildJfnSlider(def) {
   num.step = String(def.step);
   num.value = String(jfnState.draft.params[def.key]);
 
+  // Slider 'input' fires continuously during drag. We update the draft and
+  // refresh the plot — but deliberately do NOT call renderJfnBar(), since
+  // that would replace the slider element mid-drag and kill the gesture.
+  // refreshShfPanel rAF-coalesces, so spamming it is fine.
   slider.addEventListener('input', () => {
     const v = parseFloat(slider.value);
     if (isFinite(v)) {
       jfnState.draft.params[def.key] = v;
       num.value = slider.value;
+      _jfnRefreshPlot();
     }
   });
   num.addEventListener('input', () => {
@@ -343,6 +377,7 @@ function _buildJfnSlider(def) {
     // declared range — out-of-range numeric entry is allowed but won't move
     // the thumb past its stops.
     if (v >= def.min && v <= def.max) slider.value = String(v);
+    _jfnRefreshPlot();
   });
 
   row.appendChild(slider);
@@ -360,3 +395,111 @@ document.addEventListener('click', (ev) => {
   if (bar.contains(ev.target)) return;
   _jfnCollapse();
 });
+
+// ============================================================
+// Leverett J-function math + SHF curve overlay
+// ============================================================
+// Forward chain (RQI variant of the spec):
+//   RQI   = λ · sqrt(k/φ)
+//   Swirr = c · RQI^d
+//   Pc    = fpc · (10⁻³ · Δρ · g · h) / γpc
+//   J     = κ · ( Pc / (γ · cos ω) ) · sqrt(k/φ)
+//   Sw    = Swirr + (1 − Swirr) · a · J^b   (clamped to [0,1])
+// Everything past RQI depends only on the ratio sqrt(k/φ), so curves are
+// parameterized by 10 log-spaced ratio values from the data range.
+
+function jfnComputeSw(params, hafwl, ratio) {
+  const RQI = params.lambda * ratio;
+  let Swirr = params.c * Math.pow(RQI, params.d);
+  if (!isFinite(Swirr)) Swirr = 0;
+  Swirr = Math.max(0, Math.min(1, Swirr));
+  const Pc = params.fpc * (1e-3 * params.deltarho * params.g * hafwl) / params.gammapc;
+  const cosOmega = Math.cos(params.omega * Math.PI / 180);
+  const J = params.kappa * (Pc / (params.gamma * cosOmega)) * ratio;
+  // Math.pow(0, b<0) = Infinity, which clamps cleanly to 1 (full water at FWL).
+  // Math.pow(neg, fractional) = NaN → caller's segment splitter drops these.
+  const Sw = Swirr + (1 - Swirr) * params.a * Math.pow(J, params.b);
+  if (!isFinite(Sw)) return Sw;
+  return Math.max(0, Math.min(1, Sw));
+}
+
+// Returns the params currently driving the plot. While the editor is open
+// for the active equation, that's the unsaved draft (so slider drags are
+// reflected live); otherwise it's the persisted params.
+function _jfnPlotParams() {
+  if (!jfnState.activeId) return null;
+  if (jfnState.expandedId === jfnState.activeId && jfnState.draft) {
+    return jfnState.draft.params;
+  }
+  const j = _jfnFind(jfnState.activeId);
+  return j ? j.params : null;
+}
+
+// Called from shf.js _renderShfPlot. ctx supplies the SVG, scales, plot
+// bounds, and the current point set so we can pick a representative
+// sqrt(k/φ) range. No-op when nothing is active.
+function jfnRenderCurves(ctx) {
+  const params = _jfnPlotParams();
+  if (!params) return;
+  const { svg, xScale, yScale, xLo, xHi, yLo, yHi, points } = ctx;
+
+  // Pick the ratio range from the data so curves bracket the observed
+  // points. Fall back to a generic span when there's nothing to anchor to.
+  const ratios = [];
+  for (const p of points) {
+    const r = Math.sqrt(p.perm / p.por);
+    if (isFinite(r) && r > 0) ratios.push(r);
+  }
+  let ratLo, ratHi;
+  if (ratios.length >= 2) {
+    ratLo = Math.min.apply(null, ratios);
+    ratHi = Math.max.apply(null, ratios);
+  } else {
+    ratLo = 1; ratHi = 100;
+  }
+  if (!isFinite(ratLo) || ratLo <= 0) ratLo = 1;
+  if (!isFinite(ratHi) || ratHi <= ratLo) ratHi = ratLo * 100;
+
+  const N_CURVES = 10;
+  const N_SAMPLES = 120;
+  const h0 = Math.max(yLo, 0);   // J is defined only above FWL
+  const h1 = yHi;
+  if (h1 <= h0) return;
+
+  const logLo = Math.log(ratLo);
+  const logHi = Math.log(ratHi);
+
+  for (let k = 0; k < N_CURVES; k++) {
+    const t = N_CURVES === 1 ? 0.5 : k / (N_CURVES - 1);
+    const ratio = Math.exp(logLo + t * (logHi - logLo));
+
+    // Sample HAFWL across the visible y-range, splitting into segments
+    // whenever Sw leaves the visible x-range or evaluates to NaN.
+    const segments = [];
+    let cur = [];
+    for (let i = 0; i <= N_SAMPLES; i++) {
+      const h = h0 + (h1 - h0) * i / N_SAMPLES;
+      const sw = jfnComputeSw(params, h, ratio);
+      if (!isFinite(sw) || sw < xLo || sw > xHi) {
+        if (cur.length >= 2) segments.push(cur);
+        cur = [];
+        continue;
+      }
+      cur.push([xScale(sw), yScale(h)]);
+    }
+    if (cur.length >= 2) segments.push(cur);
+    if (segments.length === 0) continue;
+
+    const color = (typeof _rainbowColor === 'function') ? _rainbowColor(t) : '#3a3528';
+    for (const seg of segments) {
+      const d = 'M ' + seg.map(p => p[0].toFixed(2) + ' ' + p[1].toFixed(2)).join(' L ');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', color);
+      path.setAttribute('stroke-width', '1.6');
+      path.setAttribute('stroke-opacity', '0.85');
+      svg.appendChild(path);
+    }
+  }
+}
