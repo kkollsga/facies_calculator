@@ -686,6 +686,120 @@ th.n-h {
   text-align: center; font-style: italic; line-height: 1.6;
 }
 
+/* ============================================================
+   J-function editor — pills + expandable card under the SHF plot
+   ============================================================ */
+.jfn-bar {
+  border-top: 1px solid var(--rule);
+  padding: 14px 16px;
+  background: #fcf9f1;
+}
+.jfn-pill-row {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+}
+.jfn-pill {
+  display: inline-flex; align-items: center;
+  padding: 5px 14px;
+  border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--panel); color: var(--ink);
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; user-select: none;
+  transition: border-color .15s, background .15s, color .15s;
+  line-height: 1.4;
+}
+.jfn-pill:hover { border-color: var(--ink-soft); }
+.jfn-pill.active {
+  background: var(--ink); color: #f6f2eb; border-color: var(--ink);
+}
+.jfn-add-btn {
+  border-style: dashed; color: var(--ink-soft);
+  background: transparent;
+  font-family: 'IBM Plex Sans', sans-serif; font-weight: 500;
+}
+.jfn-add-btn:hover {
+  border-style: solid; border-color: var(--ink); color: var(--ink); background: var(--rule-soft);
+}
+.jfn-card {
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 4px;
+  box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.jfn-card-head {
+  display: flex; align-items: center; gap: 8px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--rule-soft);
+}
+.jfn-name-input {
+  flex: 1; min-width: 0;
+  font-family: 'IBM Plex Serif', Georgia, serif;
+  font-size: 15px; font-weight: 600;
+  border: 1px solid transparent; background: transparent;
+  color: var(--ink); padding: 4px 6px;
+  border-radius: 2px; outline: none;
+  transition: border-color .12s, background .12s;
+}
+.jfn-name-input:hover { border-color: var(--rule); }
+.jfn-name-input:focus { border-color: var(--ink); background: #fff; }
+.jfn-icon-btn {
+  width: 28px; height: 28px; padding: 0; flex-shrink: 0;
+  border: 0; background: transparent; cursor: pointer; border-radius: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--ink-soft); font-size: 14px; line-height: 1;
+  transition: background .12s, color .12s;
+}
+.jfn-trash-btn:hover { background: #f7e6e3; color: var(--bad); }
+.jfn-slider-block { display: flex; flex-direction: column; gap: 8px; }
+.jfn-block-head {
+  font-family: 'IBM Plex Mono', monospace; font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: 0.14em; color: var(--ink-soft);
+}
+.jfn-slider-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 22px;
+}
+@media (max-width: 700px) {
+  .jfn-slider-grid { grid-template-columns: 1fr; }
+}
+.jfn-slider-row {
+  display: grid; grid-template-columns: 36px 1fr 78px; gap: 10px;
+  align-items: center;
+}
+.jfn-slider-lbl {
+  font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+  font-weight: 600; color: var(--ink); text-align: right;
+}
+.jfn-slider {
+  width: 100%; min-width: 0;
+  accent-color: var(--ink);
+}
+.jfn-num {
+  padding: 4px 6px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px;
+  border: 1px solid var(--rule); background: #fdfaf3; border-radius: 2px;
+  outline: none; color: var(--ink); width: 100%;
+  text-align: right;
+}
+.jfn-num:focus { border-color: var(--ink); background: #fff; }
+.jfn-toggle-row {
+  padding: 2px 0;
+  font-size: 12.5px;
+}
+.jfn-card-actions {
+  display: flex; gap: 8px;
+  padding-top: 8px; border-top: 1px solid var(--rule-soft);
+}
+.jfn-action-btn {
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 500;
+  padding: 6px 16px; border-radius: 2px; cursor: pointer;
+  border: 1px solid var(--rule); background: var(--panel); color: var(--ink);
+  transition: all .12s;
+}
+.jfn-action-btn:hover { border-color: var(--ink-soft); }
+.jfn-save-btn {
+  background: var(--ink); color: #f6f2eb; border-color: var(--ink);
+}
+.jfn-save-btn:hover { background: var(--accent); border-color: var(--accent); }
+
 /* Test panel */
 .tests {
   margin-top: 24px; padding: 16px 18px; border: 1px solid var(--rule);

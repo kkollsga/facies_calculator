@@ -331,6 +331,9 @@ Projects.init();
 ProjectBar.init();
 Projects.applyToUI();
 autoRefresh();
+// J-function editor lives under the SHF panel. Equations are stored in
+// localStorage globally (not per project), so we hydrate it once on boot.
+initJfnPanel();
 
 // Last-chance flush on tab close so a pending debounce doesn't drop edits.
 window.addEventListener('beforeunload', () => { try { Projects.saveNow(); } catch (e) {} });
