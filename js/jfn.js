@@ -460,7 +460,13 @@ function jfnRenderCurves(ctx) {
   if (!isFinite(ratLo) || ratLo <= 0) ratLo = 1;
   if (!isFinite(ratHi) || ratHi <= ratLo) ratHi = ratLo * 100;
 
-  const N_CURVES = 10;
+  // Number of curves comes from the SHF plot-options control. Defaults to
+  // 10 when missing or invalid; capped at the input's max so a stray edit
+  // can't flood the SVG.
+  const countEl = document.getElementById('shf-jfn-count');
+  let N_CURVES = countEl ? parseInt(countEl.value, 10) : 10;
+  if (!isFinite(N_CURVES) || N_CURVES < 1) N_CURVES = 10;
+  if (N_CURVES > 50) N_CURVES = 50;
   const N_SAMPLES = 120;
   const h0 = Math.max(yLo, 0);   // J is defined only above FWL
   const h1 = yHi;

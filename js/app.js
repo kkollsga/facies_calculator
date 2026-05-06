@@ -239,6 +239,7 @@ document.getElementById('shf-toggle-btn').addEventListener('click', () => {
 });
 document.getElementById('shf-color').addEventListener('change', refreshShfPanel);
 document.getElementById('shf-max').addEventListener('input', refreshShfPanel);
+document.getElementById('shf-jfn-count').addEventListener('input', refreshShfPanel);
 
 // Inputs collapse bar
 function _updateInputsToggleUI() {
