@@ -196,7 +196,7 @@ function _colorMetric(p, mode) {
 }
 
 function _colorMetricLabel(mode) {
-  return mode === 'por' ? 'Porosity (φ)' : '√(k/φ)';
+  return mode === 'por' ? 'Porosity (φ)' : '√(perm/por)';
 }
 
 function _renderShfPlot(points) {
