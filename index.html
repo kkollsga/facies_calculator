@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Facies-Zone Pivot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="project-bar" id="project-bar"><!-- pills rendered by ProjectBar.render --></div>
+  <div class="project-delete-confirm" id="project-delete-confirm" role="alert">
+    <span>Delete project "<span id="project-delete-confirm-name"></span>"? This cannot be undone.</span>
+    <div class="project-delete-confirm-actions">
+      <button type="button" id="project-delete-cancel-btn">Cancel</button>
+      <button type="button" id="project-delete-ok-btn" class="danger">Delete</button>
+    </div>
+  </div>
+
+  <header>
+    <div>
+      <h1>Facies <em>×</em> Zone Pivot</h1>
+      <div class="sub">Gross thickness, facies thickness, facies fraction. Z-domain.</div>
+    </div>
+  </header>
+
+  <button class="collapse-toggle" id="inputs-toggle-btn" type="button" style="display:none;" aria-expanded="true" aria-controls="data-inputs-area">
+    <span class="collapse-chev" aria-hidden="true"></span>
+    <span class="collapse-label">Hide data inputs</span>
+  </button>
+
+  <div class="data-inputs-area" id="data-inputs-area">
+  <div class="grid-inputs">
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title"><span class="num">01</span>Well tops</div>
+        <div class="panel-hint">tab-separated, header required</div>
+      </div>
+      <textarea id="tops-in" spellcheck="false" placeholder="Well identifier (Well name)&#9;Well identifier (UWI)&#9;Surface&#9;X&#9;Y&#9;Z&#9;MD
+35/9-16 A&#9;&#9;Agat top&#9;552438.81&#9;6813461&#9;-2627.13&#9;2871.12
+35/9-16 A&#9;&#9;Sand 3 top&#9;552442.96&#9;6813459.34&#9;-2641.03&#9;2885.73
+..."></textarea>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title"><span class="num">02</span>Facies log</div>
+        <div class="panel-hint">tab-separated, header required</div>
+      </div>
+      <textarea id="facies-in" spellcheck="false" placeholder="Well&#9;MD&#9;Facies
+35/9-3 T2&#9;1868.473&#9;3
+35/9-3 T2&#9;1868.625&#9;3
+35/9-3 T2&#9;1868.778&#9;3
+..."></textarea>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title"><span class="num">03</span>Porosity log <span style="color: var(--ink-soft); font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 6px;">(optional)</span></div>
+        <div class="panel-hint">Por.Eff. / PHIE; +Perm column</div>
+      </div>
+      <textarea id="por-in" spellcheck="false" placeholder="Well&#9;MD&#9;Por.Eff.&#9;Perm
+35/9-16 S&#9;2620.061&#9;0.0632&#9;12.4
+35/9-16 S&#9;2620.213&#9;0.0854&#9;28.1
+35/9-16 S&#9;2620.366&#9;0.0664&#9;15.0
+..."></textarea>
+    </div>
+  </div>
+
+  <div class="grid-meta">
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title"><span class="num">04</span>Facies labels <span style="color: var(--ink-soft); font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 6px;">(optional)</span></div>
+        <div class="panel-hint">auto-detected from log</div>
+      </div>
+      <div class="kv-grid" id="labels-fields">
+        <div class="kv-empty">paste a facies log to detect codes</div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title"><span class="num">05</span>Zone rename <span style="color: var(--ink-soft); font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 6px;">(optional)</span></div>
+        <div class="panel-hint">auto-detected from tops</div>
+      </div>
+      <div class="kv-grid" id="zones-fields">
+        <div class="kv-empty">paste tops to detect zones</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="data-actions">
+    <button id="csv-btn" disabled>Export CSV</button>
+    <button id="copy-btn" disabled>Copy TSV</button>
+    <span class="status" id="status"></span>
+  </div>
+  </div><!-- /data-inputs-area -->
+
+  <div class="actions" id="empty-state-actions">
+    <button id="sample-btn">Load sample data</button>
+    <button id="test-btn">Run self-tests</button>
+  </div>
+
+  <div class="results" id="results-section" style="display:none;">
+    <div class="results-head">
+      <div class="results-head-left">
+        <div class="results-title">Pivot output</div>
+        <div class="results-meta" id="results-meta"></div>
+      </div>
+      <div class="col-toggles" id="col-toggles">
+        <div class="col-toggles-section">
+          <span class="col-toggles-label">Group by:</span>
+          <label class="tog"><input type="checkbox" id="g-well" checked><span class="tog-box"></span>Well</label>
+          <label class="tog"><input type="checkbox" id="g-zone" checked><span class="tog-box"></span>Zone</label>
+          <label class="tog"><input type="checkbox" id="g-facies"><span class="tog-box"></span>Facies</label>
+        </div>
+        <span class="col-toggles-divider"></span>
+        <div class="col-toggles-section">
+          <span class="col-toggles-label">Show:</span>
+          <label class="tog"><input type="checkbox" id="t-thickness" checked><span class="tog-box"></span>Facies thicknesses</label>
+          <label class="tog"><input type="checkbox" id="t-fraction"><span class="tog-box"></span>Facies fractions</label>
+          <label class="tog" id="t-porosity-label"><input type="checkbox" id="t-porosity" checked disabled><span class="tog-box"></span>Porosity</label>
+          <label class="tog" id="t-perm-label"><input type="checkbox" id="t-perm" checked disabled><span class="tog-box"></span>Permeability</label>
+        </div>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table id="pivot-table"></table>
+    </div>
+  </div>
+
+  <button class="collapse-toggle" id="plot-toggle-btn" type="button" style="display:none;" aria-expanded="false" aria-controls="plot-section">
+    <span class="collapse-chev" aria-hidden="true"></span>
+    <span class="collapse-label">Show plot</span>
+  </button>
+
+  <div class="plot-section" id="plot-section" style="display:none;">
+    <div class="plot-head">
+      <div class="plot-head-left">
+        <div class="plot-title">Plot</div>
+        <div class="plot-meta" id="plot-meta"></div>
+      </div>
+      <div class="plot-controls">
+        <div class="col-toggles-section">
+          <span class="col-toggles-label">Type:</span>
+          <label class="tog"><input type="radio" name="plot-type" id="pt-hist" value="hist" checked><span class="tog-box tog-radio"></span>Histogram</label>
+          <label class="tog" id="pt-cross-label"><input type="radio" name="plot-type" id="pt-cross" value="cross" disabled><span class="tog-box tog-radio"></span>Cross-plot</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="plot-body" id="plot-body">
+      <div class="plot-options" id="plot-options-hist">
+        <div class="plot-opt-row">
+          <span class="plot-opt-lbl">Variable</span>
+          <select class="plot-sel" id="hist-var">
+            <option value="por">Porosity</option>
+            <option value="perm">Permeability</option>
+          </select>
+        </div>
+        <div class="plot-opt-row">
+          <span class="plot-opt-lbl">Split by</span>
+          <select class="plot-sel" id="hist-split">
+            <option value="">None</option>
+            <option value="well">Well</option>
+            <option value="facies">Facies</option>
+            <option value="zone">Zone</option>
+          </select>
+        </div>
+        <div class="plot-opt-row" id="hist-layout-row" style="display:none;">
+          <span class="plot-opt-lbl">Layout</span>
+          <select class="plot-sel" id="hist-layout">
+            <option value="stacked">Stacked</option>
+            <option value="side">Side-by-side</option>
+          </select>
+        </div>
+        <div class="plot-opt-row">
+          <span class="plot-opt-lbl">Bins</span>
+          <input type="number" class="plot-num" id="hist-bins" min="5" max="100" value="25">
+        </div>
+      </div>
+
+      <div class="plot-options" id="plot-options-cross" style="display:none;">
+        <div class="plot-opt-row">
+          <span class="plot-opt-lbl">Color by</span>
+          <select class="plot-sel" id="cross-color">
+            <option value="facies" selected>Facies</option>
+            <option value="well">Well</option>
+            <option value="zone">Zone</option>
+          </select>
+        </div>
+        <div class="plot-opt-row">
+          <span class="plot-opt-lbl">Shape by</span>
+          <select class="plot-sel" id="cross-shape">
+            <option value="">None</option>
+            <option value="well" selected>Well</option>
+            <option value="facies">Facies</option>
+            <option value="zone">Zone</option>
+          </select>
+        </div>
+
+        <div class="plot-regressions">
+          <div class="plot-regressions-head">
+            <span>Regressions</span>
+            <button class="plot-reg-deselect-btn" id="reg-deselect-btn" title="Deselect to draft a new regression" style="display:none;">deselect</button>
+          </div>
+          <div class="plot-reg-list" id="reg-list"></div>
+          <div class="plot-reg-add">
+            <div class="plot-reg-mode-hint" id="reg-mode-hint">
+              These inputs draft the next regression. Click Add to fit on current filters.
+            </div>
+            <div class="plot-opt-row">
+              <span class="plot-opt-lbl">Order</span>
+              <select class="plot-sel" id="reg-order">
+                <option value="1">1 (linear)</option>
+                <option value="2">2 (quadratic)</option>
+                <option value="3">3 (cubic)</option>
+              </select>
+            </div>
+            <div class="plot-opt-row">
+              <span class="plot-opt-lbl">Name</span>
+              <input type="text" class="plot-num" id="reg-name" placeholder="e.g. Channel sand" style="text-align:left;">
+            </div>
+            <button class="plot-reg-btn" id="reg-add-btn">+ Add regression</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="plot-canvas-wrap">
+        <div class="plot-canvas" id="plot-canvas"></div>
+        <div class="plot-legend" id="plot-legend"></div>
+        <div class="plot-reg-active-detail" id="reg-active-detail" style="display:none;"></div>
+      </div>
+
+      <div class="plot-filters">
+        <div class="plot-filter-block">
+          <div class="plot-filter-head">Wells</div>
+          <div class="plot-filter-chips" id="filter-wells"></div>
+        </div>
+        <div class="plot-filter-block">
+          <div class="plot-filter-head">Zones</div>
+          <div class="plot-filter-chips" id="filter-zones"></div>
+        </div>
+        <div class="plot-filter-block">
+          <div class="plot-filter-head">Facies</div>
+          <div class="plot-filter-chips" id="filter-facies"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <button class="collapse-toggle" id="shf-toggle-btn" type="button" style="display:none;" aria-expanded="false" aria-controls="shf-section">
+    <span class="collapse-chev" aria-hidden="true"></span>
+    <span class="collapse-label">Show saturation-height</span>
+  </button>
+
+  <div class="plot-section" id="shf-section" style="display:none;">
+    <div class="plot-head">
+      <div class="plot-head-left">
+        <div class="plot-title">Saturation-height function</div>
+        <div class="plot-meta" id="shf-meta"></div>
+      </div>
+    </div>
+    <div class="plot-body">
+      <div class="plot-options">
+        <div class="plot-opt-row">
+          <span class="plot-opt-lbl">Color by</span>
+          <select class="plot-sel" id="shf-color">
+            <option value="rqi">√(k/φ)</option>
+            <option value="por">Porosity</option>
+          </select>
+        </div>
+        <div class="plot-opt-row">
+          <span class="plot-opt-lbl">Max points</span>
+          <input type="number" class="plot-num" id="shf-max" min="10" max="10000" value="100">
+        </div>
+
+        <div class="plot-regressions">
+          <div class="plot-regressions-head">
+            <span>SE equation overlay</span>
+          </div>
+          <div class="plot-reg-mode-hint">
+            Saturation-height function fit (Brooks-Corey λ / J-function) coming in a future update. Placeholder.
+          </div>
+        </div>
+      </div>
+
+      <div class="plot-canvas-wrap">
+        <div class="plot-canvas" id="shf-canvas"></div>
+        <div class="plot-legend" id="shf-legend"></div>
+      </div>
+
+      <div class="plot-filters">
+        <div class="plot-filter-block">
+          <div class="plot-filter-head">Wells</div>
+          <div class="plot-filter-chips" id="shf-filter-wells"></div>
+        </div>
+        <div class="plot-filter-block">
+          <div class="plot-filter-head">Zones</div>
+          <div class="plot-filter-chips" id="shf-filter-zones"></div>
+        </div>
+        <div class="plot-filter-block">
+          <div class="plot-filter-head">Facies</div>
+          <div class="plot-filter-chips" id="shf-filter-facies"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tests" id="tests-panel" style="display:none;">
+    <h3>Self-test results <span class="test-summary" id="test-summary"></span></h3>
+    <ul class="test-list" id="test-list"></ul>
+  </div>
+</div>
+
+<!--
+  Module load order (no build step; plain scripts share a global scope):
+    state       — globals + legacy label storage
+    projects    — per-project storage + project bar UI (depends on state)
+    parsing     — text -> rows
+    core        — zones, intervals, calculate, aggregate
+    render      — table + TSV/CSV
+    inputs      — dynamic label/zone inputs + drag-and-drop helper
+    plot        — histogram + cross-plot SVG (calls into regression for curves)
+    regression  — polyFit + reg state mgmt
+    shf         — saturation-height function panel (uses plot.js helpers)
+    tests       — self-tests
+    samples     — sample data generators
+    app         — DOM wiring; runs on load
+-->
+<script src="js/state.js"></script>
+<script src="js/projects.js"></script>
+<script src="js/parsing.js"></script>
+<script src="js/core.js"></script>
+<script src="js/render.js"></script>
+<script src="js/inputs.js"></script>
+<script src="js/plot.js"></script>
+<script src="js/regression.js"></script>
+<script src="js/shf.js"></script>
+<script src="js/tests.js"></script>
+<script src="js/samples.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

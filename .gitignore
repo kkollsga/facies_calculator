@@ -1,0 +1,5 @@
+# Local well data (not committed)
+data/
+
+# macOS
+.DS_Store
