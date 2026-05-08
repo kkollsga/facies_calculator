@@ -664,6 +664,7 @@ function shfFnSetParam(id, key, value) {
   // Live-recompute r² so the editor's stat readout follows the slider.
   _shfFnRefreshQuality(fn);
   _updateShfEditorStats();
+  _scheduleShfEquationsUpdate();
   refreshShfPanel();
   Projects.saveDebounced();
 }
@@ -877,12 +878,25 @@ function rebuildShfFunctionEditor() {
   topbar.appendChild(methodRow);
   editor.appendChild(topbar);
 
-  // Free coefficient rows: slider + numeric input. Two-column grid in
-  // landscape so 4 sliders fit in 2x2 instead of stacking.
+  // Free coefficient rows: slider + numeric input. Pairs map to chain
+  // segments — (a, b) drive Sw(J); (c, d) (or c_perm, d_perm in the
+  // perm-Swirr method) drive Swirr. A leading row label calls out
+  // which segment each pair belongs to.
   const freeKeys = fn.method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
   const freeWrap = document.createElement('div');
   freeWrap.className = 'shf-fn-sliders';
-  for (const k of freeKeys) freeWrap.appendChild(_shfBuildSliderRow(fn, k));
+  const swjLbl = document.createElement('span');
+  swjLbl.className = 'shf-fn-coef-row-lbl';
+  swjLbl.textContent = 'Sw(J)';
+  freeWrap.appendChild(swjLbl);
+  freeWrap.appendChild(_shfBuildSliderRow(fn, freeKeys[0]));
+  freeWrap.appendChild(_shfBuildSliderRow(fn, freeKeys[1]));
+  const swirrLbl = document.createElement('span');
+  swirrLbl.className = 'shf-fn-coef-row-lbl';
+  swirrLbl.textContent = 'Swirr';
+  freeWrap.appendChild(swirrLbl);
+  freeWrap.appendChild(_shfBuildSliderRow(fn, freeKeys[2]));
+  freeWrap.appendChild(_shfBuildSliderRow(fn, freeKeys[3]));
   editor.appendChild(freeWrap);
 
   // Single action row hosting (left → right): Constants toggle,
@@ -1053,14 +1067,15 @@ function _shfFmtPetrel(v) {
   return s;
 }
 
-// Build the chain of Petrel-style calculator equations for the given
-// function. Multi-line; each line is a copy-pasteable expression with
-// constants substituted.
-function _shfBuildEquationsBlock(fn) {
+// Petrel-style chain text, rebuilt on demand from the function's
+// current params. Pulled out of the block builder so the debounced
+// updater can rewrite just the <pre> on slider drags without
+// reconstructing the surrounding markup.
+function _shfEquationLines(fn) {
   const p = fn.params;
   const fmt = _shfFmtPetrel;
   const omegaRad = (p.omega * Math.PI / 180);
-  const lines = [
+  return [
     'RQI = ' + fmt(p.lambda) + ' * Sqrt(Perm / Por)',
     (fn.method === 'perm'
       ? 'Swirr = ' + fmt(p.c_perm) + ' * Pow(Perm, ' + fmt(p.d_perm) + ')'
@@ -1069,13 +1084,33 @@ function _shfBuildEquationsBlock(fn) {
     'J = ' + fmt(p.kappa) + ' * (Pc / (' + fmt(p.gamma) + ' * Cos(' + fmt(omegaRad) + '))) * Sqrt(Perm / Por)',
     'Sw = Swirr + (1 - Swirr) * ' + fmt(p.a) + ' * Pow(J, ' + fmt(p.b) + ')',
   ];
+}
+
+function _shfBuildEquationsBlock(fn) {
   const wrap = document.createElement('div');
   wrap.className = 'shf-fn-equations';
   const pre = document.createElement('pre');
   pre.className = 'shf-fn-equations-pre';
-  pre.textContent = lines.join('\n');
+  pre.textContent = _shfEquationLines(fn).join('\n');
   wrap.appendChild(pre);
   return wrap;
+}
+
+// Debounced equations rebuild — slider drags fire many input events,
+// no point rewriting the text on every tick. ~120 ms is short enough
+// to feel responsive while keeping rebuild churn trivial.
+let _shfEquationsTimer = null;
+function _scheduleShfEquationsUpdate() {
+  if (!shfState.equationsExpanded) return;
+  if (_shfEquationsTimer != null) clearTimeout(_shfEquationsTimer);
+  _shfEquationsTimer = setTimeout(() => {
+    _shfEquationsTimer = null;
+    const fn = shfState.functions.find(f => f.id === shfState.activeFunctionId);
+    if (!fn) return;
+    const pre = document.querySelector('.shf-fn-equations-pre');
+    if (!pre) return;
+    pre.textContent = _shfEquationLines(fn).join('\n');
+  }, 120);
 }
 
 function _shfFmtParam(v) {
@@ -1381,7 +1416,11 @@ function _renderShfPlot(points) {
     if (!fn.visible) continue;
     const fnPts = _shfFnPointsForFit(fn);
     if (fnPts.length === 0) continue;
-    const refs = _shfPickReferencePoints(fnPts, colorBy, shfState.lineCount);
+    // Constrain to the visible color band (legendLo..legendHi in
+    // original units), so every chosen line lands on a distinct rainbow
+    // color and lines that would have saturated at the ends aren't
+    // counted in the line total.
+    const refs = _shfPickReferencePoints(fnPts, colorBy, shfState.lineCount, legendLo, legendHi);
     for (const ref of refs) {
       const cv = _colorMetric(ref, colorBy);
       const t  = colorTFromValue(cv);
@@ -1449,43 +1488,55 @@ function _renderShfPlot(points) {
   _renderShfColorBar(_colorMetricLabel(colorBy) + '  (log)', legendLo, legendHi, colorBarTicks);
 }
 
-// Pick `n` reference points equally spaced in log of the color metric,
-// anchored at the data maximum. For n=1 only the max point is returned;
-// for n≥2 we take max and step down by (logMax − logMin) / (n − 1) until
-// we land at the min — endpoints inclusive. Each target log-value snaps
-// to the nearest real point in the dataset.
-function _shfPickReferencePoints(points, colorBy, n) {
+// Pick `n` reference points equally log-spaced in the color metric,
+// constrained to a [lo, hi] range (the panel's visible color band so
+// every line ends up at a distinct rainbow color, not saturated at an
+// end). Targets are snapped to the nearest *unique* real point — so
+// dense data with repeats can't collapse multiple targets onto the
+// same row of points (which previously made N=10 look like 8 lines).
+//
+// If lo/hi aren't supplied we fall back to the data extremes.
+function _shfPickReferencePoints(points, colorBy, n, lo, hi) {
   if (points.length === 0 || n <= 0) return [];
-  const valid = [];
+  const all = [];
   for (const p of points) {
     const v = _colorMetric(p, colorBy);
-    if (Number.isFinite(v) && v > 0) valid.push({ p, v });
+    if (Number.isFinite(v) && v > 0) all.push({ p, v });
   }
+  if (all.length === 0) return [];
+  if (!(lo > 0)) {
+    let minV = Infinity; for (const e of all) if (e.v < minV) minV = e.v;
+    lo = minV;
+  }
+  if (!(hi > 0)) {
+    let maxV = -Infinity; for (const e of all) if (e.v > maxV) maxV = e.v;
+    hi = maxV;
+  }
+  // Restrict to points whose color metric falls inside the visible
+  // color band. Lines outside it are saturated colors that visually
+  // collapse onto the band's extremes, so they don't count.
+  const valid = all.filter(e => e.v >= lo && e.v <= hi);
   if (valid.length === 0) return [];
-  let minV = Infinity, maxV = -Infinity;
-  let maxPoint = valid[0].p;
-  for (const e of valid) {
-    if (e.v < minV) minV = e.v;
-    if (e.v > maxV) { maxV = e.v; maxPoint = e.p; }
+  // Degenerate range — fall back to a single representative.
+  if (!(hi > lo)) {
+    const med = valid[Math.floor(valid.length / 2)].p;
+    return Array(Math.min(n, valid.length)).fill(med);
   }
-  // n=1 → just the max. Degenerate range → max repeated.
-  if (n === 1 || !(minV > 0 && maxV > minV)) {
-    return Array(n).fill(maxPoint);
-  }
-  const lnLo = Math.log(minV);
-  const lnHi = Math.log(maxV);
+  const lnLo = Math.log(lo);
+  const lnHi = Math.log(hi);
   const out = [];
+  const used = new Set();
   for (let i = 0; i < n; i++) {
-    // q goes 0..1 across the n lines; i=0 lands at min, i=n-1 lands at
-    // max. Iteration order is min→max so the highest-RQI line draws
-    // last (sits on top of the lower ones in the SVG paint stack).
-    const q = i / (n - 1);
+    const q = (n === 1) ? 1 : i / (n - 1);
     const target = Math.exp(lnLo + q * (lnHi - lnLo));
-    let bestIdx = 0, bestD = Infinity;
+    let bestIdx = -1, bestD = Infinity;
     for (let j = 0; j < valid.length; j++) {
+      if (used.has(j)) continue;
       const d = Math.abs(valid[j].v - target);
       if (d < bestD) { bestD = d; bestIdx = j; }
     }
+    if (bestIdx < 0) break;     // out of unique candidates
+    used.add(bestIdx);
     out.push(valid[bestIdx].p);
   }
   return out;

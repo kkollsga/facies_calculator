@@ -480,8 +480,14 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .shf-fn-sliders { display: flex; flex-direction: column; gap: 4px; }
 .shf-fn-sliders {
   min-width: 0;
-  display: grid; grid-template-columns: 1fr 1fr;
-  gap: 3px 28px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  gap: 3px 24px; align-items: center;
+}
+.shf-fn-coef-row-lbl {
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 11px;
+  font-weight: 500; color: var(--ink-soft);
+  padding-right: 6px; white-space: nowrap;
 }
 .shf-fn-slider-row {
   display: grid; grid-template-columns: 24px minmax(0, 1fr) 88px;
