@@ -632,10 +632,19 @@ function shfFnRename(id, name) {
 function shfFnSetMethod(id, method) {
   const fn = shfState.functions.find(f => f.id === id);
   if (!fn) return;
-  fn.method = method === 'perm' ? 'perm' : 'rqi';
+  const next = method === 'perm' ? 'perm' : 'rqi';
+  fn.method = next;
   // Quality changes whenever the chain changes; null it out so stale
   // numbers don't display on the editor.
   fn.r2 = null; fn.n = 0;
+  // Color metric tracks the Swirr predictor: perm method colors by
+  // permeability, RQI method colors by √(k/φ). The user can override
+  // afterwards via the Color-by dropdown.
+  const colorEl = document.getElementById('shf-color');
+  if (colorEl) {
+    const target = next === 'perm' ? 'perm' : 'rqi';
+    if (colorEl.value !== target) colorEl.value = target;
+  }
   rebuildShfFunctionEditor();
   refreshShfPanel();
   Projects.saveDebounced();
@@ -804,9 +813,13 @@ function rebuildShfFunctionEditor() {
   head.appendChild(nameInp);
   editor.appendChild(head);
 
-  // Method radio
+  // Method radio — single row: "Swirr from  RQI  Perm"
   const methodRow = document.createElement('div');
   methodRow.className = 'shf-fn-method-row';
+  const methodLbl = document.createElement('span');
+  methodLbl.className = 'shf-fn-method-lbl';
+  methodLbl.textContent = 'Swirr from';
+  methodRow.appendChild(methodLbl);
   for (const m of ['rqi', 'perm']) {
     const lab = document.createElement('label');
     lab.className = 'shf-fn-method-opt' + (fn.method === m ? ' active' : '');
@@ -817,7 +830,7 @@ function rebuildShfFunctionEditor() {
     r.checked = fn.method === m;
     r.addEventListener('change', () => { if (r.checked) shfFnSetMethod(fn.id, m); });
     lab.appendChild(r);
-    lab.appendChild(document.createTextNode(' ' + (m === 'rqi' ? 'Swirr from RQI' : 'Swirr from Perm')));
+    lab.appendChild(document.createTextNode(' ' + (m === 'rqi' ? 'RQI' : 'Perm')));
     methodRow.appendChild(lab);
   }
   editor.appendChild(methodRow);
@@ -1089,8 +1102,9 @@ function _refreshShfPanelImpl() {
 }
 
 function _colorMetric(p, mode) {
-  if (mode === 'por') return p.por;
-  // RQI: √(perm/φ) — common rock quality proxy.
+  if (mode === 'por')  return p.por;
+  if (mode === 'perm') return p.perm;
+  // Default 'rqi' — √(perm/φ), the common rock-quality proxy.
   return Math.sqrt(p.perm / p.por);
 }
 
@@ -1165,7 +1179,9 @@ function _shfTooltipHtml(p) {
 }
 
 function _colorMetricLabel(mode) {
-  return mode === 'por' ? 'Porosity (φ)' : '√(k/φ)';
+  if (mode === 'por')  return 'Porosity (φ)';
+  if (mode === 'perm') return 'Permeability (k)';
+  return '√(k/φ)';
 }
 
 function _renderShfPlot(points) {

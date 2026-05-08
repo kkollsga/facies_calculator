@@ -441,8 +441,11 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .shf-fn-name-input:focus { border-color: var(--ink); }
 .shf-fn-method-row {
-  display: flex; gap: 6px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 6px;
   font-size: 11px; font-family: 'IBM Plex Mono', monospace;
+}
+.shf-fn-method-lbl {
+  color: var(--ink-soft); margin-right: 2px; flex-shrink: 0;
 }
 .shf-fn-method-opt {
   display: flex; align-items: center; gap: 4px; cursor: pointer;
