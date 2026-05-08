@@ -36,6 +36,19 @@ const shfState = {
   // shows the full chain with current parameter values substituted —
   // copy-paste-friendly for Petrel calculator.
   equationsExpanded: false,
+  // Exponent applied to RQI (or perm for the perm method) when
+  // weighting points in the R² calculation. 0 = unweighted standard
+  // R²; positive values bias the readout toward high-RQI / high-perm
+  // rocks, where the fit quality usually matters most.
+  r2Bias: 0,
+  // ML fit algorithm:
+  //   'linear'  — log-space linearised 2-stage solve + short coord-descent
+  //               refinement. Fast, robust on typical data.
+  //   'coord'   — pure coordinate descent + golden-section search on
+  //               weighted SSE, no log linearisation. Slower; better
+  //               when log-linear assumptions are bad (e.g. heavy
+  //               low-Sw clipping).
+  fitAlgo: 'linear',
 };
 
 // ============================================================
@@ -146,33 +159,38 @@ function _shfWeightedSse(points, params, method) {
   return n >= 3 ? s : Infinity;
 }
 
-// Standard R² (unweighted) for reporting — "% variance explained" against
-// the mean of the same valid-prediction subset. Mean has to be computed
-// over *valid* points only, otherwise sst and the residuals don't share
-// a baseline (which is why the previous version always read 0 / NaN).
+// R² with optional high-RQI / high-perm bias. Weights = metric^bias
+// where metric is RQI (or perm for the perm method). Bias = 0 → equal
+// weights = standard R². Higher bias makes the readout favour fits
+// over good-quality rock. Mean, SSres, and SStot are all computed
+// against the same weighted subset so the residual decomposition stays
+// internally consistent.
 function _shfRSquared(points, params, method) {
   if (!points || points.length === 0) return { r2: 0, n: 0 };
-  // First pass: collect predictions, drop invalid samples so mean and sse
-  // are computed against the same set.
+  const bias = Number.isFinite(shfState.r2Bias) ? Math.max(0, shfState.r2Bias) : 0;
   const valid = [];
   for (const p of points) {
     const pred = _shfPredictSw(p.por, p.perm, p.hafwl, params, method);
     if (!Number.isFinite(pred)) continue;
-    valid.push({ sw: p.sw, pred });
+    let w = 1;
+    if (bias > 0) {
+      const m = method === 'perm' ? p.perm : _shfRqi(p.perm, p.por, params);
+      if (m > 0) w = Math.pow(m, bias);
+    }
+    valid.push({ sw: p.sw, pred, w });
   }
   if (valid.length === 0) return { r2: 0, n: 0 };
-  let mean = 0;
-  for (const v of valid) mean += v.sw;
-  mean /= valid.length;
+  let sumW = 0, sumWSw = 0;
+  for (const v of valid) { sumW += v.w; sumWSw += v.w * v.sw; }
+  const wmean = sumW > 0 ? sumWSw / sumW : 0;
   let sse = 0, sst = 0;
   for (const v of valid) {
-    const r = v.sw - v.pred;
-    const t = v.sw - mean;
-    sse += r * r;
-    sst += t * t;
+    const r = v.sw - v.pred, t = v.sw - wmean;
+    sse += v.w * r * r;
+    sst += v.w * t * t;
   }
-  // R² can legitimately go negative when the model fits worse than the
-  // mean — surface that to the user (clamping to 0 hides bad fits).
+  // R² can go negative when the model is worse than the (weighted)
+  // mean — surface as-is so the user sees they need to refit.
   const r2 = sst > 0 ? (1 - sse / sst) : 0;
   return { r2, n: valid.length };
 }
@@ -216,7 +234,14 @@ function _clampToRange(v, key) {
   return Math.max(r.min, Math.min(r.max, v));
 }
 
-// ML fit: linearised 2-stage solve, then a coordinate-descent refinement.
+// ML fit dispatcher — picks the algorithm based on shfState.fitAlgo.
+function _shfMlFit(points, startParams, method) {
+  const algo = shfState.fitAlgo === 'coord' ? 'coord' : 'linear';
+  if (algo === 'coord') return _shfMlFitCoord(points, startParams, method);
+  return _shfMlFitLinear(points, startParams, method);
+}
+
+// Linearised 2-stage solve, then a short coordinate-descent refinement.
 //
 //   Stage 1 — Swirr model (c, d): bin points by RQI (or k for perm
 //             method), take the p20 of Sw within each bin as the
@@ -231,7 +256,7 @@ function _clampToRange(v, key) {
 //             the log-space fit.
 //
 // Constants (γ, γpc, ω, Δρ, g, fpc, κ, λ) are not touched.
-function _shfMlFit(points, startParams, method) {
+function _shfMlFitLinear(points, startParams, method) {
   if (!points || points.length < 5) return null;
   const params = Object.assign({}, startParams);
 
@@ -331,6 +356,40 @@ function _shfMlFit(points, startParams, method) {
     if (!improved) break;
   }
 
+  const quality = _shfRSquared(points, params, method);
+  return { params, sse: best, r2: quality.r2, n: quality.n };
+}
+
+// Pure coordinate descent + golden-section search on weighted SSE.
+// Doesn't lean on log-linear initialisation — useful when the data
+// doesn't fit the linearisation assumptions well (e.g. Sw values that
+// flatten near the asymptote, or sparse high-RQI tails). Slower than
+// the linearised path; runs more passes and a tighter line-search
+// tolerance to compensate for starting from defaults.
+function _shfMlFitCoord(points, startParams, method) {
+  if (!points || points.length < 5) return null;
+  const params = Object.assign({}, startParams);
+  const free = method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
+  let best = _shfWeightedSse(points, params, method);
+  for (let pass = 0; pass < 16; pass++) {
+    let improved = false;
+    for (const k of free) {
+      const range = SHF_PARAM_RANGES[k];
+      const probe = (v) => {
+        const old = params[k]; params[k] = v;
+        const s = _shfWeightedSse(points, params, method);
+        params[k] = old;
+        return s;
+      };
+      const newVal = _goldenSectionMin(probe, range.min, range.max, (range.max - range.min) * 1e-7);
+      const oldVal = params[k];
+      params[k] = newVal;
+      const s = _shfWeightedSse(points, params, method);
+      if (s < best - 1e-12) { best = s; improved = true; }
+      else { params[k] = oldVal; }
+    }
+    if (!improved) break;
+  }
   const quality = _shfRSquared(points, params, method);
   return { params, sse: best, r2: quality.r2, n: quality.n };
 }
@@ -734,6 +793,22 @@ function shfFnSetLineCount(n) {
   Projects.saveDebounced();
 }
 
+function shfFnSetR2Bias(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return;
+  shfState.r2Bias = Math.max(0, Math.min(5, n));
+  // Recompute r² for every function under the new weighting and refresh
+  // the active function's editor stat (others read on next render).
+  for (const fn of shfState.functions) _shfFnRefreshQuality(fn);
+  _updateShfEditorStats();
+  Projects.saveDebounced();
+}
+
+function shfFnSetAlgo(algo) {
+  shfState.fitAlgo = (algo === 'coord') ? 'coord' : 'linear';
+  Projects.saveDebounced();
+}
+
 function shfFnToggleConstantsExpanded() {
   shfState.constantsExpanded = !shfState.constantsExpanded;
   rebuildShfFunctionEditor();
@@ -954,12 +1029,65 @@ function rebuildShfFunctionEditor() {
   freeWrap.appendChild(_shfBuildSliderRow(fn, freeKeys[3], fnLocked));
   editor.appendChild(freeWrap);
 
-  // Single action row hosting (left → right): Constants toggle,
-  // Show-equations toggle, ML fit button, R² readout. Toggles flex
-  // to share the left half; fit button stays compact; stats flow to
-  // the right of the button.
-  const actionRow = document.createElement('div');
-  actionRow.className = 'shf-fn-toggles';
+  // Fit row (top): algorithm dropdown · ML fit button · R² readout · bias slider.
+  const fitRow = document.createElement('div');
+  fitRow.className = 'shf-fn-fit-row';
+
+  const algoSel = document.createElement('select');
+  algoSel.className = 'shf-fn-algo-sel';
+  algoSel.title = 'ML fit algorithm';
+  for (const opt of [['linear', 'Linearised'], ['coord', 'Coord descent']]) {
+    const o = document.createElement('option');
+    o.value = opt[0]; o.textContent = opt[1];
+    if ((shfState.fitAlgo || 'linear') === opt[0]) o.selected = true;
+    algoSel.appendChild(o);
+  }
+  if (fnLocked) algoSel.disabled = true;
+  algoSel.addEventListener('change', () => shfFnSetAlgo(algoSel.value));
+  fitRow.appendChild(algoSel);
+
+  const fitBtn = document.createElement('button');
+  fitBtn.type = 'button';
+  fitBtn.className = 'plot-reg-btn';
+  fitBtn.textContent = 'ML fit';
+  if (fnLocked) fitBtn.disabled = true;
+  fitBtn.addEventListener('click', () => { if (!fnLocked) shfFnMlFit(fn.id); });
+  fitRow.appendChild(fitBtn);
+
+  const stats = document.createElement('div');
+  stats.id = 'shf-editor-stats';
+  stats.className = 'shf-fn-editor-stats';
+  fitRow.appendChild(stats);
+
+  // High-quality-rock bias slider — exponent on RQI/perm in the R² weights.
+  const biasGroup = document.createElement('div');
+  biasGroup.className = 'shf-fn-bias-group';
+  const biasLbl = document.createElement('span');
+  biasLbl.className = 'shf-fn-bias-lbl';
+  biasLbl.textContent = (fn.method === 'perm' ? 'High-k bias' : 'High-RQI bias');
+  biasLbl.title = 'Weight for the R² calc — higher values pull the readout toward good-quality rock.';
+  biasGroup.appendChild(biasLbl);
+  const biasSlider = document.createElement('input');
+  biasSlider.type = 'range';
+  biasSlider.className = 'shf-fn-slider shf-fn-bias-slider';
+  biasSlider.min = '0'; biasSlider.max = '5'; biasSlider.step = '0.1';
+  biasSlider.value = String(shfState.r2Bias || 0);
+  biasGroup.appendChild(biasSlider);
+  const biasVal = document.createElement('span');
+  biasVal.className = 'shf-fn-bias-val';
+  biasVal.textContent = (Number(biasSlider.value)).toFixed(1);
+  biasGroup.appendChild(biasVal);
+  biasSlider.addEventListener('input', () => {
+    biasVal.textContent = Number(biasSlider.value).toFixed(1);
+    shfFnSetR2Bias(biasSlider.value);
+  });
+  fitRow.appendChild(biasGroup);
+
+  editor.appendChild(fitRow);
+
+  // Toggles row: Constants and Show-equations side-by-side, 50/50.
+  const togglesRow = document.createElement('div');
+  togglesRow.className = 'shf-fn-toggles';
 
   const constHead = document.createElement('div');
   constHead.className = 'shf-fn-const-head-wrap';
@@ -980,29 +1108,16 @@ function rebuildShfFunctionEditor() {
     lockBtn.addEventListener('click', shfFnToggleConstantsLock);
     constHead.appendChild(lockBtn);
   }
-  actionRow.appendChild(constHead);
+  togglesRow.appendChild(constHead);
 
   const eqHead = document.createElement('button');
   eqHead.type = 'button';
   eqHead.className = 'shf-fn-const-head' + (shfState.equationsExpanded ? ' open' : '');
   eqHead.textContent = (shfState.equationsExpanded ? '▾' : '▸') + ' Show equations';
   eqHead.addEventListener('click', shfFnToggleEquationsExpanded);
-  actionRow.appendChild(eqHead);
+  togglesRow.appendChild(eqHead);
 
-  const fitBtn = document.createElement('button');
-  fitBtn.type = 'button';
-  fitBtn.className = 'plot-reg-btn';
-  fitBtn.textContent = 'ML fit';
-  if (fnLocked) fitBtn.disabled = true;
-  fitBtn.addEventListener('click', () => { if (!fnLocked) shfFnMlFit(fn.id); });
-  actionRow.appendChild(fitBtn);
-
-  const stats = document.createElement('div');
-  stats.id = 'shf-editor-stats';
-  stats.className = 'shf-fn-editor-stats';
-  actionRow.appendChild(stats);
-
-  editor.appendChild(actionRow);
+  editor.appendChild(togglesRow);
 
   if (shfState.constantsExpanded) {
     const constWrap = document.createElement('div');

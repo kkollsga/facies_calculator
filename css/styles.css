@@ -572,11 +572,43 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .shf-fn-toggles {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px 12px; align-items: center;
   margin-top: 2px;
 }
 .shf-fn-toggles > * { min-width: 0; }
+.shf-fn-fit-row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.shf-fn-fit-row .plot-reg-btn { flex-shrink: 0; }
+.shf-fn-fit-row .shf-fn-editor-stats { flex-shrink: 0; min-width: 0; }
+.shf-fn-algo-sel {
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 11px;
+  padding: 3px 6px; border: 1px solid var(--rule); background: #fdfaf3;
+  border-radius: 2px; outline: none; color: var(--ink); cursor: pointer;
+}
+.shf-fn-algo-sel:hover { border-color: var(--ink); }
+.shf-fn-algo-sel:disabled { cursor: not-allowed; opacity: 0.6; }
+.shf-fn-bias-group {
+  display: flex; align-items: center; gap: 8px;
+  margin-left: auto;
+}
+.shf-fn-bias-lbl {
+  font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--ink-soft); white-space: nowrap;
+}
+.shf-fn-bias-slider { width: 110px; }
+.shf-fn-bias-val {
+  font-family: 'IBM Plex Mono', monospace; font-size: 10.5px;
+  color: var(--ink); min-width: 22px; text-align: right;
+}
+/* The earlier override that made .plot-reg-btn auto-width inside the
+ * combined toggles row needs to apply on the fit row now too. */
+.shf-fn-fit-row .plot-reg-btn,
+.shf-fn-toggles .plot-reg-btn {
+  width: auto; padding: 4px 12px; font-size: 11px;
+}
 .shf-fn-const-head {
   width: 100%;
   font-family: 'IBM Plex Mono', monospace; font-size: 10.5px;

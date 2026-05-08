@@ -187,6 +187,8 @@ const Projects = {
       constantsExpanded: !!shfState.constantsExpanded,
       constantsLocked: shfState.constantsLocked !== false,
       equationsExpanded: !!shfState.equationsExpanded,
+      r2Bias: Number.isFinite(shfState.r2Bias) ? shfState.r2Bias : 0,
+      fitAlgo: shfState.fitAlgo === 'coord' ? 'coord' : 'linear',
       // Max HAFWL: empty means auto (shallowest data point); otherwise
       // a positive number override.
       maxHafwl: (() => {
@@ -305,6 +307,11 @@ const Projects = {
     shfState.constantsExpanded = !!sp.constantsExpanded;
     shfState.constantsLocked = sp.constantsLocked !== false;
     shfState.equationsExpanded = !!sp.equationsExpanded;
+    {
+      const v = Number(sp.r2Bias);
+      shfState.r2Bias = (Number.isFinite(v) && v >= 0 && v <= 5) ? v : 0;
+    }
+    shfState.fitAlgo = sp.fitAlgo === 'coord' ? 'coord' : 'linear';
     shfState.activeFunctionId = (sp.activeFunctionId != null) ? sp.activeFunctionId : null;
     shfState.nextFunctionId = parseInt(sp.nextFunctionId) || 1;
     shfState.functions = (Array.isArray(sp.functions) ? sp.functions : []).map(o => ({
