@@ -23,9 +23,10 @@ const shfState = {
   functions: [],
   activeFunctionId: null,
   nextFunctionId: 1,
-  // Number of representative (k, φ) lines drawn per visible function
-  // — picked at evenly-spaced quantiles of the color metric.
-  lineCount: 1,
+  // Number of representative (k, φ) lines drawn per visible function —
+  // picked at log-spaced color-metric values, snapped to nearest real
+  // point. Default 10, max 40.
+  lineCount: 10,
   // Constants are read-only by default. The lock icon next to the
   // "Constants" section header toggles editability for γ, γpc, ω, Δρ, g,
   // fpc, κ, λ. Free coefficients are always editable.
@@ -649,20 +650,14 @@ function shfFnSetParam(id, key, value) {
   Projects.saveDebounced();
 }
 
-// Reuse the function's locked filters when scoring quality / running the
-// ML fit, so each function is anchored to the data set it was calibrated
-// against (independent of whatever the user has chip-filtered now).
-function _shfFnPointsForFit(fn) {
-  return lastPorPoints.filter(p => {
-    if (fn.filters.wells.size  && !fn.filters.wells.has(p.well))   return false;
-    if (fn.filters.zones.size  && !fn.filters.zones.has(p.zone))   return false;
-    if (fn.filters.facies.size && p.facies != null
-        && !fn.filters.facies.has(p.facies)) return false;
-    return p.por != null && p.por > 0
-        && p.perm != null && p.perm > 0
-        && p.hafwl != null && p.hafwl >= 0
-        && p.sw != null && p.sw < 1;
-  });
+// Use the *current* chip-filtered point set for fitting and quality, not
+// the function's locked filter snapshot. This way line representatives,
+// r², and ML fit all track whatever the user is looking at right now —
+// changing a chip filter immediately recomputes the lines and r² off the
+// new (k, φ) distribution. The locked snapshot is preserved on the
+// function record for forward compatibility but no longer queried here.
+function _shfFnPointsForFit(_fn) {
+  return shfFilteredPoints();
 }
 
 function _shfFnRefreshQuality(fn) {
@@ -701,7 +696,7 @@ function shfFnMlFit(id) {
 }
 
 function shfFnSetLineCount(n) {
-  const v = Math.max(1, Math.min(10, parseInt(n) || 1));
+  const v = Math.max(1, Math.min(40, parseInt(n) || 10));
   shfState.lineCount = v;
   refreshShfPanel();
   Projects.saveDebounced();
@@ -1233,22 +1228,40 @@ function _renderShfPlot(points) {
   _renderShfColorBar(_colorMetricLabel(colorBy) + '  (log)', legendLo, legendHi, colorBarTicks);
 }
 
-// Pick `n` reference points from `points`, evenly spaced across quantiles
-// of the chosen color metric. Returns the original point objects so the
-// overlay uses real (por, perm) pairs, not synthetic mid-points.
+// Pick `n` reference points whose color-metric values are equally spaced
+// in *log* space (since the colorbar itself is log-scaled). For each
+// target log-value we snap to the nearest real point so the overlay uses
+// actual (por, perm) pairs that exist in the dataset.
 function _shfPickReferencePoints(points, colorBy, n) {
   if (points.length === 0 || n <= 0) return [];
-  const sorted = points.slice().sort((a, b) =>
-    _colorMetric(a, colorBy) - _colorMetric(b, colorBy));
+  const valid = [];
+  for (const p of points) {
+    const v = _colorMetric(p, colorBy);
+    if (Number.isFinite(v) && v > 0) valid.push({ p, v });
+  }
+  if (valid.length === 0) return [];
+  let minV = Infinity, maxV = -Infinity;
+  for (const e of valid) { if (e.v < minV) minV = e.v; if (e.v > maxV) maxV = e.v; }
+  // Degenerate range: return the median point repeated; visually a single
+  // line, but the caller still gets `n` entries so the count is honored.
+  if (!(minV > 0 && maxV > minV)) {
+    const med = valid[Math.floor(valid.length / 2)].p;
+    return Array(n).fill(med);
+  }
+  const lnLo = Math.log(minV);
+  const lnHi = Math.log(maxV);
   const out = [];
-  const len = sorted.length;
   for (let i = 0; i < n; i++) {
-    // Spread quantiles symmetrically: n=1 → median; n=2 → p25/p75;
-    // n=3 → p17/p50/p83; etc. Avoids hugging the extremes which are
-    // often outliers in real well data.
+    // Interior spacing q = (i+1)/(n+1) so the first and last lines don't
+    // hug the data extremes (often outliers).
     const q = (i + 1) / (n + 1);
-    const idx = Math.max(0, Math.min(len - 1, Math.round(q * (len - 1))));
-    out.push(sorted[idx]);
+    const target = Math.exp(lnLo + q * (lnHi - lnLo));
+    let bestIdx = 0, bestD = Infinity;
+    for (let j = 0; j < valid.length; j++) {
+      const d = Math.abs(valid[j].v - target);
+      if (d < bestD) { bestD = d; bestIdx = j; }
+    }
+    out.push(valid[bestIdx].p);
   }
   return out;
 }

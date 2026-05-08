@@ -235,7 +235,7 @@ const Projects = {
       facies: ((sp.prevDetected && sp.prevDetected.facies) || []).slice(),
     };
     _shfCategoryFp = null;
-    shfState.lineCount = Math.max(1, Math.min(10, parseInt(sp.lineCount) || 1));
+    shfState.lineCount = Math.max(1, Math.min(40, parseInt(sp.lineCount) || 10));
     // constantsLocked defaults to true (locked) when missing — matches new
     // default behaviour and keeps existing projects safe by default.
     shfState.constantsLocked = sp.constantsLocked !== false;
