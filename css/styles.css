@@ -429,17 +429,38 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .shf-fn-icon:hover { background: #ece6d8; color: var(--ink); }
 .shf-fn-editor {
-  margin-top: 8px; padding: 8px; border: 1px solid var(--rule);
+  margin-top: 16px; padding: 14px 18px; border: 1px solid var(--rule);
   background: #fcf9f1; border-radius: 3px;
-  display: flex; flex-direction: column; gap: 8px;
+  display: flex; flex-direction: column; gap: 12px;
 }
-.shf-fn-editor-head { display: flex; gap: 6px; }
+.shf-fn-topbar {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
 .shf-fn-name-input {
-  flex: 1; font-family: 'IBM Plex Sans', sans-serif; font-size: 12px;
+  flex: 1; min-width: 220px;
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 500;
   padding: 4px 8px; border: 1px solid var(--rule); background: #fff;
   border-radius: 2px; outline: none; color: var(--ink);
 }
 .shf-fn-name-input:focus { border-color: var(--ink); }
+.shf-fn-bottom {
+  display: flex; gap: 16px; align-items: center;
+}
+.shf-fn-bottom .plot-reg-btn { flex-shrink: 0; }
+.shf-fn-const-head-wrap {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 2px;
+}
+.shf-fn-lock {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px;
+  border: none; background: transparent; cursor: pointer;
+  padding: 0; border-radius: 2px;
+  color: var(--ink-soft);
+}
+.shf-fn-lock:hover { background: #ece6d8; color: var(--ink); }
+.shf-fn-lock.open { color: var(--ink); }
+.shf-fn-lock svg { display: block; }
 .shf-fn-method-row {
   display: flex; align-items: center; gap: 6px;
   font-size: 11px; font-family: 'IBM Plex Mono', monospace;
@@ -455,10 +476,14 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .shf-fn-method-opt input { margin: 0; }
 .shf-fn-method-opt.active { color: var(--ink); border-color: var(--ink); background: #fff; }
 .shf-fn-sliders { display: flex; flex-direction: column; gap: 4px; }
-.shf-fn-sliders { min-width: 0; }
+.shf-fn-sliders {
+  min-width: 0;
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 6px 32px;
+}
 .shf-fn-slider-row {
-  display: grid; grid-template-columns: 24px minmax(0, 1fr) 64px;
-  gap: 6px; align-items: center; min-width: 0;
+  display: grid; grid-template-columns: 24px minmax(0, 1fr) 88px;
+  gap: 8px; align-items: center; min-width: 0;
 }
 .shf-fn-slider-lbl {
   font-family: 'IBM Plex Mono', monospace; font-size: 11px;
@@ -479,13 +504,33 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   width: 12px; height: 12px; background: var(--ink);
   border-radius: 50%; cursor: pointer; border: none;
 }
-.shf-fn-num {
+/* Subtle inline number editor — no box, no border, no background. A
+ * faint underline appears on hover/focus to hint at editability. The
+ * native spinner buttons are hidden so they don't eat horizontal space
+ * (which was causing the trailing digits to clip). */
+.shf-fn-num, .shf-fn-const-input {
   font-family: 'IBM Plex Mono', monospace; font-size: 11px;
-  padding: 2px 5px; border: 1px solid var(--rule); background: #fff;
-  border-radius: 2px; outline: none; color: var(--ink);
-  width: 100%; min-width: 0; box-sizing: border-box; text-align: right;
+  padding: 2px 2px;
+  border: none; background: transparent;
+  border-bottom: 1px solid transparent;
+  outline: none; color: var(--ink);
+  width: 100%; min-width: 0; box-sizing: border-box;
+  text-align: right;
+  transition: border-color .12s;
+  -moz-appearance: textfield;
 }
-.shf-fn-num:focus { border-color: var(--ink); }
+.shf-fn-num::-webkit-outer-spin-button,
+.shf-fn-num::-webkit-inner-spin-button,
+.shf-fn-const-input::-webkit-outer-spin-button,
+.shf-fn-const-input::-webkit-inner-spin-button {
+  -webkit-appearance: none; margin: 0;
+}
+.shf-fn-num:hover, .shf-fn-const-input:hover {
+  border-bottom-color: var(--rule);
+}
+.shf-fn-num:focus, .shf-fn-const-input:focus {
+  border-bottom-color: var(--ink);
+}
 .shf-fn-const-head {
   align-self: flex-start;
   font-family: 'IBM Plex Mono', monospace; font-size: 10px;
@@ -496,16 +541,18 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .shf-fn-const-head:hover { background: #ece6d8; color: var(--ink); }
 .shf-fn-constants {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 4px 8px;
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 4px 24px;
+  padding: 4px 0;
 }
 .shf-fn-const-row {
-  display: grid; grid-template-columns: 70px 1fr;
-  gap: 10px; align-items: baseline;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px; align-items: baseline;
   font-family: 'IBM Plex Mono', monospace; font-size: 11px;
 }
 .shf-fn-const-val {
   color: var(--ink); text-align: right;
+  padding-right: 2px;
 }
 .shf-fn-const-lbl {
   color: var(--ink-soft);

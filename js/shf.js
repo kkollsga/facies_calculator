@@ -27,10 +27,11 @@ const shfState = {
   // picked at log-spaced color-metric values, snapped to nearest real
   // point. Default 10, max 40.
   lineCount: 10,
-  // Constants section is collapsed by default. Click the header to
-  // expand and inspect the eight physical constants (γ, γpc, ω, Δρ, g,
-  // fpc, κ, λ). Constants are read-only — they're not editable here.
+  // Constants section: collapsed by default. When expanded, a lock icon
+  // appears in the header — click it to make the constants editable.
+  // Locked = read-only display; unlocked = editable inputs.
   constantsExpanded: false,
+  constantsLocked: true,
   // Petrel-style equations section, collapsed by default. When open
   // shows the full chain with current parameter values substituted —
   // copy-paste-friendly for Petrel calculator.
@@ -721,6 +722,43 @@ function shfFnToggleConstantsExpanded() {
   Projects.saveDebounced();
 }
 
+function shfFnToggleConstantsLock() {
+  shfState.constantsLocked = !shfState.constantsLocked;
+  rebuildShfFunctionEditor();
+  Projects.saveDebounced();
+}
+
+// Monochrome lock icon as inline SVG. stroke="currentColor" so it picks
+// up the surrounding text color from the parent button — keeps the
+// editor's tone consistent (the colored emoji 🔒/🔓 didn't).
+function _shfLockIcon(locked) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('width', '12');
+  svg.setAttribute('height', '12');
+  svg.setAttribute('viewBox', '0 0 12 12');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.25');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  const body = document.createElementNS(ns, 'rect');
+  body.setAttribute('x', '2.5');
+  body.setAttribute('y', '5.5');
+  body.setAttribute('width', '7');
+  body.setAttribute('height', '5');
+  body.setAttribute('rx', '0.6');
+  svg.appendChild(body);
+  const arc = document.createElementNS(ns, 'path');
+  // Closed: shackle finishes back into the body. Open: shackle right
+  // leg lifts out to indicate the lock is unlocked.
+  arc.setAttribute('d', locked
+    ? 'M4 5.5V3.6a2 2 0 0 1 4 0V5.5'
+    : 'M4 5.5V3.6a2 2 0 0 1 3.6-1.05');
+  svg.appendChild(arc);
+  return svg;
+}
+
 function shfFnToggleEquationsExpanded() {
   shfState.equationsExpanded = !shfState.equationsExpanded;
   rebuildShfFunctionEditor();
@@ -802,18 +840,17 @@ function rebuildShfFunctionEditor() {
   editor.style.display = '';
   editor.innerHTML = '';
 
-  // Name + method row
-  const head = document.createElement('div');
-  head.className = 'shf-fn-editor-head';
+  // Top bar: name input + Swirr-from radio side-by-side. Landscape
+  // layout below the plot has plenty of room so we collapse what was
+  // previously two stacked rows into one.
+  const topbar = document.createElement('div');
+  topbar.className = 'shf-fn-topbar';
   const nameInp = document.createElement('input');
   nameInp.type = 'text';
   nameInp.value = fn.name;
   nameInp.className = 'shf-fn-name-input';
   nameInp.addEventListener('input', () => shfFnRename(fn.id, nameInp.value));
-  head.appendChild(nameInp);
-  editor.appendChild(head);
-
-  // Method radio — single row: "Swirr from  RQI  Perm"
+  topbar.appendChild(nameInp);
   const methodRow = document.createElement('div');
   methodRow.className = 'shf-fn-method-row';
   const methodLbl = document.createElement('span');
@@ -833,53 +870,51 @@ function rebuildShfFunctionEditor() {
     lab.appendChild(document.createTextNode(' ' + (m === 'rqi' ? 'RQI' : 'Perm')));
     methodRow.appendChild(lab);
   }
-  editor.appendChild(methodRow);
+  topbar.appendChild(methodRow);
+  editor.appendChild(topbar);
 
-  // Free coefficient rows: slider + numeric input
+  // Free coefficient rows: slider + numeric input. Two-column grid in
+  // landscape so 4 sliders fit in 2x2 instead of stacking.
   const freeKeys = fn.method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
   const freeWrap = document.createElement('div');
   freeWrap.className = 'shf-fn-sliders';
   for (const k of freeKeys) freeWrap.appendChild(_shfBuildSliderRow(fn, k));
   editor.appendChild(freeWrap);
 
-  // Constants section — collapsible, hidden by default. Click the header
-  // to expand. Constants are read-only display only (no sliders), with
-  // the value shown to the left of the symbol.
-  const constHead = document.createElement('button');
-  constHead.type = 'button';
-  constHead.className = 'shf-fn-const-head' + (shfState.constantsExpanded ? ' open' : '');
-  constHead.textContent = (shfState.constantsExpanded ? '▾' : '▸') + ' Constants';
-  constHead.addEventListener('click', shfFnToggleConstantsExpanded);
+  // Constants header: toggle + (when expanded) a lock icon controlling
+  // editability. The lock is what flips the constants section between
+  // read-only display and editable number inputs.
+  const constHead = document.createElement('div');
+  constHead.className = 'shf-fn-const-head-wrap';
+  const constToggle = document.createElement('button');
+  constToggle.type = 'button';
+  constToggle.className = 'shf-fn-const-head' + (shfState.constantsExpanded ? ' open' : '');
+  constToggle.textContent = (shfState.constantsExpanded ? '▾' : '▸') + ' Constants';
+  constToggle.addEventListener('click', shfFnToggleConstantsExpanded);
+  constHead.appendChild(constToggle);
+  if (shfState.constantsExpanded) {
+    const lockBtn = document.createElement('button');
+    lockBtn.type = 'button';
+    lockBtn.className = 'shf-fn-lock' + (shfState.constantsLocked ? '' : ' open');
+    lockBtn.appendChild(_shfLockIcon(shfState.constantsLocked));
+    lockBtn.title = shfState.constantsLocked
+      ? 'Unlock constants for editing'
+      : 'Lock constants';
+    lockBtn.addEventListener('click', shfFnToggleConstantsLock);
+    constHead.appendChild(lockBtn);
+  }
   editor.appendChild(constHead);
   if (shfState.constantsExpanded) {
     const constWrap = document.createElement('div');
     constWrap.className = 'shf-fn-constants';
     for (const k of SHF_CONSTANT_PARAMS) {
-      constWrap.appendChild(_shfBuildConstantRow(fn, k));
+      constWrap.appendChild(_shfBuildConstantRow(fn, k, !shfState.constantsLocked));
     }
     editor.appendChild(constWrap);
   }
 
-  // ML fit + stats
-  const fitRow = document.createElement('div');
-  fitRow.className = 'shf-fn-fit-row';
-  const fitBtn = document.createElement('button');
-  fitBtn.type = 'button';
-  fitBtn.className = 'plot-reg-btn';
-  fitBtn.textContent = 'ML fit on filtered data';
-  fitBtn.addEventListener('click', () => shfFnMlFit(fn.id));
-  fitRow.appendChild(fitBtn);
-  editor.appendChild(fitRow);
-
-  const stats = document.createElement('div');
-  stats.id = 'shf-editor-stats';
-  stats.className = 'shf-fn-editor-stats';
-  editor.appendChild(stats);
-  _updateShfEditorStats();
-
-  // Show equations toggle — collapsed by default. When expanded, drops
-  // a copy-pasteable block of Petrel-calculator-style expressions with
-  // all current parameter values substituted in.
+  // Show equations toggle. When expanded, the Petrel-style block sits
+  // full-width below.
   const eqHead = document.createElement('button');
   eqHead.type = 'button';
   eqHead.className = 'shf-fn-const-head' + (shfState.equationsExpanded ? ' open' : '');
@@ -889,6 +924,22 @@ function rebuildShfFunctionEditor() {
   if (shfState.equationsExpanded) {
     editor.appendChild(_shfBuildEquationsBlock(fn));
   }
+
+  // Bottom row: ML fit button + R² readout, side-by-side.
+  const bottom = document.createElement('div');
+  bottom.className = 'shf-fn-bottom';
+  const fitBtn = document.createElement('button');
+  fitBtn.type = 'button';
+  fitBtn.className = 'plot-reg-btn';
+  fitBtn.textContent = 'ML fit on filtered data';
+  fitBtn.addEventListener('click', () => shfFnMlFit(fn.id));
+  bottom.appendChild(fitBtn);
+  const stats = document.createElement('div');
+  stats.id = 'shf-editor-stats';
+  stats.className = 'shf-fn-editor-stats';
+  bottom.appendChild(stats);
+  editor.appendChild(bottom);
+  _updateShfEditorStats();
 }
 
 // Row for an editable free coefficient: label · slider · numeric input.
@@ -940,18 +991,36 @@ function _shfBuildSliderRow(fn, key) {
   return row;
 }
 
-// Read-only display row for a constant: value · symbol. Two columns,
-// value right-aligned on the left. No box / border — just text — so
-// the constants section reads like a reference table, not editable
-// inputs that pretend they aren't.
-function _shfBuildConstantRow(fn, key) {
+// Constant row: value · symbol. Two columns, value right-aligned on
+// the left. When `editable` is true the value cell becomes a subtle
+// number input that writes through to fn.params[key]; otherwise it's
+// a plain span — no border, no box.
+function _shfBuildConstantRow(fn, key, editable) {
   const range = SHF_PARAM_RANGES[key];
   const row = document.createElement('div');
-  row.className = 'shf-fn-const-row';
-  const valEl = document.createElement('span');
-  valEl.className = 'shf-fn-const-val';
-  valEl.textContent = _shfFmtParam(fn.params[key]);
-  row.appendChild(valEl);
+  row.className = 'shf-fn-const-row' + (editable ? ' editable' : '');
+  if (editable) {
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.className = 'shf-fn-const-input';
+    inp.min = String(range.min);
+    inp.max = String(range.max);
+    inp.step = String(range.step);
+    inp.value = _shfFmtParam(fn.params[key]);
+    inp.addEventListener('input', () => {
+      const v = Number(inp.value);
+      if (!Number.isFinite(v)) return;
+      const clamped = Math.max(range.min, Math.min(range.max, v));
+      shfFnSetParam(fn.id, key, clamped);
+    });
+    inp.addEventListener('blur', () => { inp.value = _shfFmtParam(Number(inp.value)); });
+    row.appendChild(inp);
+  } else {
+    const valEl = document.createElement('span');
+    valEl.className = 'shf-fn-const-val';
+    valEl.textContent = _shfFmtParam(fn.params[key]);
+    row.appendChild(valEl);
+  }
   const lblEl = document.createElement('span');
   lblEl.className = 'shf-fn-const-lbl';
   lblEl.title = range.desc;

@@ -164,6 +164,7 @@ const Projects = {
       },
       lineCount: shfState.lineCount | 0,
       constantsExpanded: !!shfState.constantsExpanded,
+      constantsLocked: shfState.constantsLocked !== false,
       equationsExpanded: !!shfState.equationsExpanded,
       activeFunctionId: shfState.activeFunctionId,
       nextFunctionId: shfState.nextFunctionId,
@@ -238,6 +239,7 @@ const Projects = {
     _shfCategoryFp = null;
     shfState.lineCount = Math.max(1, Math.min(40, parseInt(sp.lineCount) || 10));
     shfState.constantsExpanded = !!sp.constantsExpanded;
+    shfState.constantsLocked = sp.constantsLocked !== false;
     shfState.equationsExpanded = !!sp.equationsExpanded;
     shfState.activeFunctionId = (sp.activeFunctionId != null) ? sp.activeFunctionId : null;
     shfState.nextFunctionId = parseInt(sp.nextFunctionId) || 1;
