@@ -188,7 +188,8 @@ const Projects = {
       constantsLocked: shfState.constantsLocked !== false,
       equationsExpanded: !!shfState.equationsExpanded,
       r2Bias: Number.isFinite(shfState.r2Bias) ? shfState.r2Bias : 0,
-      fitAlgo: shfState.fitAlgo === 'coord' ? 'coord' : 'linear',
+      fitAlgo: (shfState.fitAlgo === 'coord' || shfState.fitAlgo === 'mcmc')
+        ? shfState.fitAlgo : 'linear',
       // Max HAFWL: empty means auto (shallowest data point); otherwise
       // a positive number override.
       maxHafwl: (() => {
@@ -213,6 +214,10 @@ const Projects = {
           zones:  fn.filters && fn.filters.zones  ? [...fn.filters.zones]  : [],
           facies: fn.filters && fn.filters.facies ? [...fn.filters.facies] : [],
         },
+        // MCMC posterior P10/P50/P90 per free coefficient (null for
+        // linearised / coord-descent fits). Drives the uncertainty band
+        // shown on the sliders.
+        uncertainty: fn.uncertainty || null,
       })),
     };
   },
@@ -311,7 +316,8 @@ const Projects = {
       const v = Number(sp.r2Bias);
       shfState.r2Bias = (Number.isFinite(v) && v >= 0 && v <= 5) ? v : 0;
     }
-    shfState.fitAlgo = sp.fitAlgo === 'coord' ? 'coord' : 'linear';
+    shfState.fitAlgo = (sp.fitAlgo === 'coord' || sp.fitAlgo === 'mcmc')
+      ? sp.fitAlgo : 'linear';
     shfState.activeFunctionId = (sp.activeFunctionId != null) ? sp.activeFunctionId : null;
     shfState.nextFunctionId = parseInt(sp.nextFunctionId) || 1;
     shfState.functions = (Array.isArray(sp.functions) ? sp.functions : []).map(o => ({
@@ -329,6 +335,7 @@ const Projects = {
         zones:  new Set((o.filters && o.filters.zones)  || []),
         facies: new Set((o.filters && o.filters.facies) || []),
       },
+      uncertainty: (o.uncertainty && typeof o.uncertainty === 'object') ? o.uncertainty : null,
       r2: null, n: 0,
     }));
     // Sync DOM controls that aren't reactive to state.

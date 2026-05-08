@@ -143,15 +143,25 @@ function _shfPredictSw(por, perm, hafwl, params, method) {
   return Math.max(0, Math.min(1, sw));
 }
 
-// Weighted SSE on Sw, using w = 1 / max(eps, Sw²) so the irreducible-water
-// asymptote (low Sw, where the model is supposed to converge to Swirr)
-// gets pulled into the fit instead of being drowned by the high-Sw front.
+// Weighted SSE on Sw, used as the loss for every ML algorithm. Two
+// weight terms compose:
+//   1. 1 / Sw² — pulls the irreducible-water asymptote into the fit so
+//      the long low-Sw tail isn't drowned by the high-Sw front.
+//   2. metric^bias (RQI for the rqi method, perm for the perm method) —
+//      bias slider's exponent. 0 = neutral; positive values push the
+//      optimiser toward good-quality rock, mirroring what R² uses, so
+//      the loss being minimised matches the readout.
 function _shfWeightedSse(points, params, method) {
+  const bias = Number.isFinite(shfState.r2Bias) ? Math.max(0, shfState.r2Bias) : 0;
   let s = 0, n = 0;
   for (const p of points) {
     const pred = _shfPredictSw(p.por, p.perm, p.hafwl, params, method);
     if (!Number.isFinite(pred)) continue;
-    const w = 1 / Math.max(1e-4, p.sw * p.sw);
+    let w = 1 / Math.max(1e-4, p.sw * p.sw);
+    if (bias > 0) {
+      const m = method === 'perm' ? p.perm : _shfRqi(p.perm, p.por, params);
+      if (m > 0) w *= Math.pow(m, bias);
+    }
     const d = pred - p.sw;
     s += w * d * d;
     n++;
@@ -235,8 +245,13 @@ function _clampToRange(v, key) {
 }
 
 // ML fit dispatcher — picks the algorithm based on shfState.fitAlgo.
-function _shfMlFit(points, startParams, method) {
-  const algo = shfState.fitAlgo === 'coord' ? 'coord' : 'linear';
+// Always async; the linearised + coord-descent paths resolve immediately,
+// MCMC yields to the event loop periodically so the UI stays responsive.
+async function _shfMlFit(points, startParams, method) {
+  const algo = shfState.fitAlgo === 'mcmc'  ? 'mcmc'
+             : shfState.fitAlgo === 'coord' ? 'coord'
+             : 'linear';
+  if (algo === 'mcmc')  return await _shfMlFitMcmc(points, startParams, method);
   if (algo === 'coord') return _shfMlFitCoord(points, startParams, method);
   return _shfMlFitLinear(points, startParams, method);
 }
@@ -285,7 +300,11 @@ function _shfMlFitLinear(points, startParams, method) {
       const swirr_emp = sws[Math.floor(sws.length * 0.20)];
       const xMid = slice[Math.floor(slice.length / 2)].x;
       if (xMid > 0 && swirr_emp > 0 && swirr_emp < 1) {
-        binPts.push({ x: Math.log(xMid), y: Math.log(swirr_emp), w: 1 });
+        // Stage 1 also honours the high-RQI / high-k bias — fits the
+        // Swirr asymptote toward better rock when bias > 0.
+        const bias = Number.isFinite(shfState.r2Bias) ? Math.max(0, shfState.r2Bias) : 0;
+        const w = bias > 0 ? Math.pow(xMid, bias) : 1;
+        binPts.push({ x: Math.log(xMid), y: Math.log(swirr_emp), w });
       }
     }
     const lin = binPts.length >= 3 ? _wlinFit(binPts) : null;
@@ -321,7 +340,14 @@ function _shfMlFitLinear(points, startParams, method) {
     if (!(j > 0)) continue;
     const num = (p.sw - swirr) / (1 - swirr);
     if (!(num > 0)) continue;
-    stage2Pts.push({ x: Math.log(j), y: Math.log(num), w: 1 / Math.max(1e-4, p.sw * p.sw) });
+    // Stage 2 weight = 1/Sw² × metric^bias (mirrors _shfWeightedSse).
+    let w2 = 1 / Math.max(1e-4, p.sw * p.sw);
+    const bias2 = Number.isFinite(shfState.r2Bias) ? Math.max(0, shfState.r2Bias) : 0;
+    if (bias2 > 0) {
+      const m = isPerm ? p.perm : _shfRqi(p.perm, p.por, params);
+      if (m > 0) w2 *= Math.pow(m, bias2);
+    }
+    stage2Pts.push({ x: Math.log(j), y: Math.log(num), w: w2 });
   }
   if (stage2Pts.length >= 3) {
     const lin = _wlinFit(stage2Pts);
@@ -392,6 +418,131 @@ function _shfMlFitCoord(points, startParams, method) {
   }
   const quality = _shfRSquared(points, params, method);
   return { params, sse: best, r2: quality.r2, n: quality.n };
+}
+
+// Adaptive Metropolis-Hastings MCMC, mirroring the leverett-j project's
+// optimize(). 400 warmup + 1600 sampling iterations of independent
+// Gaussian proposals per free parameter. Adapts each parameter's
+// proposal σ during warmup to target ~0.4 acceptance. Posterior
+// temperature is -(N/2)·log(SSE) so the credible band tracks evidence
+// strength. Returns the same shape as the other algorithms (P50 of
+// each posterior committed as the value), with an extra `uncertainty`
+// map carrying P10/P50/P90 per parameter for future readout.
+async function _shfMlFitMcmc(points, startParams, method) {
+  if (!points || points.length < 5) return null;
+  const free = method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
+  const params = Object.assign({}, startParams);
+
+  // Project starting values into bounds.
+  for (const k of free) {
+    const r = SHF_PARAM_RANGES[k];
+    params[k] = Math.max(r.min, Math.min(r.max, params[k]));
+  }
+
+  const N = points.length;
+  const sse = () => _shfWeightedSse(points, params, method);
+  const logPost = () => {
+    const s = sse();
+    if (!isFinite(s) || s <= 0) return -Infinity;
+    return -(N / 2) * Math.log(s);
+  };
+
+  const gauss = () => {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  };
+
+  let lp = logPost();
+  if (!isFinite(lp)) {
+    // Fall back to range midpoints if the start point sits at zero
+    // likelihood (can happen with extreme defaults vs odd data).
+    for (const k of free) {
+      const r = SHF_PARAM_RANGES[k];
+      params[k] = (r.min + r.max) / 2;
+    }
+    lp = logPost();
+    if (!isFinite(lp)) return null;
+  }
+
+  const propSigma = {}, accepted = {}, attempted = {};
+  for (const k of free) {
+    const r = SHF_PARAM_RANGES[k];
+    propSigma[k] = 0.05 * (r.max - r.min);
+    accepted[k] = 0;
+    attempted[k] = 0;
+  }
+
+  const WARMUP = 400, SAMPLE = 1600, TOTAL = WARMUP + SAMPLE;
+  const samples = free.map(() => []);
+  let yieldCounter = 0;
+
+  for (let it = 0; it < TOTAL; it++) {
+    // One Metropolis update per free parameter (component-wise update
+    // pattern — robust when the parameters have very different scales).
+    for (let i = 0; i < free.length; i++) {
+      const k = free[i];
+      const r = SHF_PARAM_RANGES[k];
+      const oldVal = params[k];
+      const proposed = oldVal + gauss() * propSigma[k];
+      attempted[k]++;
+      if (proposed < r.min || proposed > r.max) continue;
+      params[k] = proposed;
+      const lpProp = logPost();
+      if (Math.log(Math.random()) < lpProp - lp) {
+        lp = lpProp;
+        accepted[k]++;
+      } else {
+        params[k] = oldVal;
+      }
+    }
+
+    // Adapt proposal σ during warmup.
+    if (it < WARMUP && it > 0 && it % 50 === 0) {
+      for (const k of free) {
+        if (attempted[k] === 0) continue;
+        const rate = accepted[k] / attempted[k];
+        const scale = rate > 0.55 ? 1.3 : rate > 0.45 ? 1.1
+                    : rate < 0.25 ? 0.7 : rate < 0.35 ? 0.9 : 1.0;
+        const r = SHF_PARAM_RANGES[k];
+        propSigma[k] = Math.max(1e-12, Math.min(r.max - r.min, propSigma[k] * scale));
+        accepted[k] = 0;
+        attempted[k] = 0;
+      }
+    }
+
+    if (it >= WARMUP) {
+      for (let i = 0; i < free.length; i++) samples[i].push(params[free[i]]);
+    }
+
+    // Yield every 250 iterations so the UI doesn't freeze.
+    if (++yieldCounter >= 250) {
+      yieldCounter = 0;
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  // Posterior summary. Commit P50 as the new value per parameter.
+  const percentile = (arr, p) => {
+    const sorted = arr.slice().sort((a, b) => a - b);
+    const idx = Math.max(0, Math.min(sorted.length - 1, Math.floor(p * (sorted.length - 1))));
+    return sorted[idx];
+  };
+  const round5 = v => (v == null || isNaN(v)) ? v : Math.round(v * 1e5) / 1e5;
+  const uncertainty = {};
+  for (let i = 0; i < free.length; i++) {
+    const k = free[i];
+    uncertainty[k] = {
+      lo:     round5(percentile(samples[i], 0.10)),
+      center: round5(percentile(samples[i], 0.50)),
+      hi:     round5(percentile(samples[i], 0.90)),
+    };
+    params[k] = uncertainty[k].center;
+  }
+
+  const quality = _shfRSquared(points, params, method);
+  return { params, sse: sse(), r2: quality.r2, n: quality.n, uncertainty };
 }
 
 let _shfCategoryFp = null;
@@ -708,8 +859,10 @@ function shfFnSetMethod(id, method) {
   const next = method === 'perm' ? 'perm' : 'rqi';
   fn.method = next;
   // Quality changes whenever the chain changes; null it out so stale
-  // numbers don't display on the editor.
+  // numbers don't display on the editor. Same for the MCMC uncertainty
+  // — it was conditioned on the previous method's free parameters.
   fn.r2 = null; fn.n = 0;
+  fn.uncertainty = null;
   // Color metric tracks the Swirr predictor: perm method colors by
   // permeability, RQI method colors by √(k/φ). The user can override
   // afterwards via the Color-by dropdown. Dispatch a change event so
@@ -757,11 +910,28 @@ function _shfFnRefreshQuality(fn) {
   fn.r2 = q.r2; fn.n = q.n;
 }
 
-function shfFnMlFit(id) {
+async function shfFnMlFit(id) {
   const fn = shfState.functions.find(f => f.id === id);
   if (!fn) return;
   const pts = _shfFnPointsForFit(fn);
-  const result = _shfMlFit(pts, fn.params, fn.method);
+
+  // MCMC takes ~2000 iterations × n points — show a "Fitting…" state on
+  // the button so the user knows it's working. Linearised + coord
+  // descent finish before the next paint, so no progress UI needed.
+  const isMcmc = shfState.fitAlgo === 'mcmc';
+  const fitBtn = isMcmc ? document.querySelector('.shf-fn-fit-row .plot-reg-btn') : null;
+  if (fitBtn) {
+    fitBtn.disabled = true;
+    fitBtn.textContent = 'Fitting…';
+  }
+  let result = null;
+  try { result = await _shfMlFit(pts, fn.params, fn.method); }
+  finally {
+    if (fitBtn) {
+      fitBtn.disabled = !!fn.locked;
+      fitBtn.textContent = 'ML fit';
+    }
+  }
   if (!result) {
     const stats = document.getElementById('shf-editor-stats');
     if (stats) {
@@ -772,9 +942,11 @@ function shfFnMlFit(id) {
   }
   fn.params = result.params;
   fn.r2 = result.r2; fn.n = result.n;
-  // Also refresh the locked filter snapshot to match what the user is
-  // actually looking at right now — most natural workflow is "filter the
-  // data → ML fit", and they expect the function to track those filters.
+  // MCMC reports posterior P10/P50/P90 per free parameter — stash for
+  // future readout (other algorithms leave this null).
+  fn.uncertainty = result.uncertainty || null;
+  // Refresh the locked filter snapshot to match the user's current
+  // selection — most natural workflow is "filter → ML fit".
   fn.filters = {
     wells:  new Set(shfState.filters.wells),
     zones:  new Set(shfState.filters.zones),
@@ -805,7 +977,7 @@ function shfFnSetR2Bias(v) {
 }
 
 function shfFnSetAlgo(algo) {
-  shfState.fitAlgo = (algo === 'coord') ? 'coord' : 'linear';
+  shfState.fitAlgo = (algo === 'coord' || algo === 'mcmc') ? algo : 'linear';
   Projects.saveDebounced();
 }
 
@@ -1036,7 +1208,7 @@ function rebuildShfFunctionEditor() {
   const algoSel = document.createElement('select');
   algoSel.className = 'shf-fn-algo-sel';
   algoSel.title = 'ML fit algorithm';
-  for (const opt of [['linear', 'Linearised'], ['coord', 'Coord descent']]) {
+  for (const opt of [['linear', 'Linearised'], ['coord', 'Coord descent'], ['mcmc', 'MCMC']]) {
     const o = document.createElement('option');
     o.value = opt[0]; o.textContent = opt[1];
     if ((shfState.fitAlgo || 'linear') === opt[0]) o.selected = true;
@@ -1159,6 +1331,24 @@ function _shfBuildSliderRow(fn, key, disabled) {
   slider.step = String(range.step);
   slider.value = String(fn.params[key]);
   if (disabled) slider.disabled = true;
+  // MCMC uncertainty band — paint a slightly darker tone on the track
+  // between the posterior P10 and P90 for this parameter. Other
+  // algorithms leave fn.uncertainty null, so the slider keeps its
+  // plain track in those cases.
+  const u = fn.uncertainty && fn.uncertainty[key];
+  if (u && Number.isFinite(u.lo) && Number.isFinite(u.hi) && u.hi > u.lo) {
+    const span = (range.max - range.min) || 1;
+    const lo = Math.max(0, Math.min(100, ((u.lo - range.min) / span) * 100));
+    const hi = Math.max(0, Math.min(100, ((u.hi - range.min) / span) * 100));
+    // CSS variable resolves correctly inside an inline-style gradient
+    // — keeps the band's outer track in sync with the page theme.
+    const base = 'var(--rule)';
+    const band = 'rgba(40, 38, 32, 0.40)';
+    slider.style.background =
+      `linear-gradient(to right, ${base} 0%, ${base} ${lo.toFixed(2)}%,`
+      + ` ${band} ${lo.toFixed(2)}%, ${band} ${hi.toFixed(2)}%,`
+      + ` ${base} ${hi.toFixed(2)}%, ${base} 100%)`;
+  }
   row.appendChild(slider);
 
   const numInp = document.createElement('input');
