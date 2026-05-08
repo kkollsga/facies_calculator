@@ -429,24 +429,32 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .shf-fn-icon:hover { background: #ece6d8; color: var(--ink); }
 .shf-fn-editor {
-  margin-top: 16px; padding: 14px 18px; border: 1px solid var(--rule);
+  margin-top: 14px; padding: 10px 14px; border: 1px solid var(--rule);
   background: #fcf9f1; border-radius: 3px;
-  display: flex; flex-direction: column; gap: 12px;
+  display: flex; flex-direction: column; gap: 8px;
 }
 .shf-fn-topbar {
-  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
 }
 .shf-fn-name-input {
   flex: 1; min-width: 220px;
   font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 500;
-  padding: 4px 8px; border: 1px solid var(--rule); background: #fff;
+  padding: 3px 8px; border: 1px solid var(--rule); background: #fff;
   border-radius: 2px; outline: none; color: var(--ink);
 }
 .shf-fn-name-input:focus { border-color: var(--ink); }
 .shf-fn-bottom {
-  display: flex; gap: 16px; align-items: center;
+  display: flex; gap: 14px; align-items: center; min-width: 0;
 }
-.shf-fn-bottom .plot-reg-btn { flex-shrink: 0; }
+/* Override the cross-plot's full-width .plot-reg-btn — the SHF bottom
+ * row sits inline with the R² stats, so the button hugs its label. */
+.shf-fn-bottom .plot-reg-btn {
+  width: auto; padding: 4px 12px; font-size: 11px;
+  flex-shrink: 0;
+}
+.shf-fn-bottom .shf-fn-editor-stats {
+  margin: 0; flex: 1; min-width: 0;
+}
 .shf-fn-const-head-wrap {
   display: flex; align-items: center; gap: 6px;
   margin-top: 2px;
@@ -479,7 +487,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .shf-fn-sliders {
   min-width: 0;
   display: grid; grid-template-columns: 1fr 1fr;
-  gap: 6px 32px;
+  gap: 3px 28px;
 }
 .shf-fn-slider-row {
   display: grid; grid-template-columns: 24px minmax(0, 1fr) 88px;
@@ -567,10 +575,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   background: #fdfaf3; border: 1px solid var(--rule); border-radius: 3px;
   white-space: pre-wrap; word-break: break-word;
 }
-.shf-fn-fit-row { display: flex; }
 .shf-fn-editor-stats {
   font-size: 10.5px; line-height: 1.35; color: var(--ink-soft);
-  font-style: italic; padding: 0 2px;
+  font-style: italic; padding: 0;
 }
 .shf-legend-barwrap {
   position: relative; display: inline-block; vertical-align: middle;

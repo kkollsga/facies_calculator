@@ -931,7 +931,7 @@ function rebuildShfFunctionEditor() {
   const fitBtn = document.createElement('button');
   fitBtn.type = 'button';
   fitBtn.className = 'plot-reg-btn';
-  fitBtn.textContent = 'ML fit on filtered data';
+  fitBtn.textContent = 'ML fit';
   fitBtn.addEventListener('click', () => shfFnMlFit(fn.id));
   bottom.appendChild(fitBtn);
   const stats = document.createElement('div');
