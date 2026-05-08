@@ -20,9 +20,25 @@ const shfState = {
 };
 
 let _shfCategoryFp = null;
+// Tracks the last set of categories detected per axis. Used to distinguish
+// "brand-new category (default include)" from "previously-known category
+// the user explicitly excluded". Cleared on project switch.
+let _shfPrevDetected = { wells: [], zones: [], facies: [] };
 
 function resetShfCategoryCache() {
   _shfCategoryFp = null;
+  _shfPrevDetected = { wells: [], zones: [], facies: [] };
+}
+
+// Reconcile a filter Set against an old vs new detected category list. New
+// categories get added (default include). Vanished categories get dropped.
+// Categories present in both old and new are left alone — preserving the
+// user's include/exclude state.
+function _reconcileShfFilter(set, prevDetected, newDetected) {
+  const newDet = new Set(newDetected);
+  const prevDet = new Set(prevDetected);
+  for (const v of [...set]) if (!newDet.has(v)) set.delete(v);
+  for (const v of newDetected) if (!prevDet.has(v)) set.add(v);
 }
 
 function _shfCategoryFingerprint() {
@@ -68,7 +84,9 @@ function initShfPanel() {
     document.getElementById('shf-section').style.display = 'none';
     shfState.visible = false;
     _updateShfToggleUI();
-    _shfCategoryFp = '';
+    // Don't touch _shfCategoryFp here. SHF availability flickers as the user
+    // edits the porosity log (perm column briefly missing, FWL cleared, etc.)
+    // and we want filter selections to survive those flickers — not reset.
     return;
   }
 
@@ -81,9 +99,13 @@ function initShfPanel() {
   const wells  = uniqueValues(lastPorPoints, 'well');
   const zones  = uniqueValues(lastPorPoints, 'zone');
   const facies = uniqueValues(lastPorPoints, 'facies');
-  shfState.filters.wells.clear();  for (const v of wells)  shfState.filters.wells.add(v);
-  shfState.filters.zones.clear();  for (const v of zones)  shfState.filters.zones.add(v);
-  shfState.filters.facies.clear(); for (const v of facies) shfState.filters.facies.add(v);
+  // Reconcile against the previous detection so user exclusions persist.
+  // First time around, _shfPrevDetected is empty → every detected category
+  // counts as "brand new" and gets default-included.
+  _reconcileShfFilter(shfState.filters.wells,  _shfPrevDetected.wells,  wells);
+  _reconcileShfFilter(shfState.filters.zones,  _shfPrevDetected.zones,  zones);
+  _reconcileShfFilter(shfState.filters.facies, _shfPrevDetected.facies, facies);
+  _shfPrevDetected = { wells, zones, facies };
   _buildShfFilterChips('shf-filter-wells', wells, shfState.filters.wells);
   _buildShfFilterChips('shf-filter-zones', zones, shfState.filters.zones);
   _buildShfFilterChips('shf-filter-facies', facies, shfState.filters.facies, f => {
@@ -122,9 +144,11 @@ function shfFilteredPoints() {
     if (!shfState.filters.wells.has(p.well)) return false;
     if (!shfState.filters.zones.has(p.zone)) return false;
     if (p.facies != null && !shfState.filters.facies.has(p.facies)) return false;
+    // HAFWL < 0 means "below the free water level" — those points sit in the
+    // water leg, not the SHF transition zone, so they're noise for this plot.
     return p.por != null && isFinite(p.por) && p.por > 0
         && p.perm != null && isFinite(p.perm) && p.perm > 0
-        && p.hafwl != null && isFinite(p.hafwl)
+        && p.hafwl != null && isFinite(p.hafwl) && p.hafwl >= 0
         && p.sw != null && isFinite(p.sw);
   });
 }
@@ -265,6 +289,21 @@ function _colorMetric(p, mode) {
   return Math.sqrt(p.perm / p.por);
 }
 
+// Lazily create a single hover-tooltip element pinned to the SHF canvas
+// wrap. Reused across renders — we only flip display + textContent.
+let _shfTooltipEl = null;
+function _ensureShfTooltipEl() {
+  if (_shfTooltipEl && _shfTooltipEl.isConnected) return _shfTooltipEl;
+  const canvas = document.getElementById('shf-canvas');
+  const wrap = canvas && canvas.parentElement;
+  if (!wrap) return null;
+  if (getComputedStyle(wrap).position === 'static') wrap.style.position = 'relative';
+  _shfTooltipEl = document.createElement('div');
+  _shfTooltipEl.className = 'shf-tooltip';
+  wrap.appendChild(_shfTooltipEl);
+  return _shfTooltipEl;
+}
+
 function _shfTooltip(p) {
   const num = (v, d) => (v == null || !isFinite(v)) ? '—' : Number(v).toFixed(d);
   const rqi = (p.por != null && p.perm != null && p.por > 0)
@@ -298,7 +337,8 @@ function _renderShfPlot(points) {
   const ys = points.map(p => p.hafwl);
   let xLo = 0;
   let xHi = Math.max(1, Math.max.apply(null, xs));
-  let yLo = Math.min(0, Math.min.apply(null, ys));
+  // Y-axis pinned at HAFWL = 0 (FWL); below-FWL points are filtered upstream.
+  let yLo = 0;
   let yHi = Math.max.apply(null, ys);
   if (yHi <= yLo) yHi = yLo + 1;
   // Headroom on top so points don't kiss the axis.
@@ -311,6 +351,9 @@ function _renderShfPlot(points) {
 
   const canvas = document.getElementById('shf-canvas');
   canvas.innerHTML = '';
+  // Stale tooltip from a previous render won't get a mouseleave when its
+  // circle is removed — hide eagerly so it doesn't hang over the new plot.
+  if (_shfTooltipEl) _shfTooltipEl.style.display = 'none';
   const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, width: '100%' }, canvas);
 
   const xScale = v => M.left + (v - xLo) / (xHi - xLo) * iw;
@@ -343,9 +386,11 @@ function _renderShfPlot(points) {
   const yLab = svgEl('text', { x: 16, y: M.top + ih / 2, 'text-anchor': 'middle', transform: 'rotate(-90 16 ' + (M.top + ih / 2) + ')', 'font-size': '11', 'font-family': 'IBM Plex Sans, sans-serif', fill: '#3a3528', 'font-weight': '500' }, svg);
   yLab.textContent = 'HAFWL';
 
-  // Points. Each circle carries a native SVG <title> for hover-tooltip
-  // showing well + log values + RQI — relies on the browser tooltip so
-  // there's no overlay layer to maintain.
+  // Points. Hover tooltip is a custom HTML overlay (not native SVG <title>)
+  // because native tooltips collapse newlines in Chrome/Safari, are slow to
+  // appear, and look like OS chrome. The overlay is created once per render
+  // alongside the canvas and positioned by mousemove.
+  const tip = _ensureShfTooltipEl();
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
     const x = xScale(p.sw);
@@ -357,8 +402,17 @@ function _renderShfPlot(points) {
       fill: color, 'fill-opacity': 0.78,
       stroke: color, 'stroke-opacity': 0.95, 'stroke-width': 0.6,
     }, svg);
-    const title = svgEl('title', null, c);
-    title.textContent = _shfTooltip(p);
+    c.addEventListener('mouseenter', () => {
+      tip.textContent = _shfTooltip(p);
+      tip.style.display = 'block';
+    });
+    c.addEventListener('mousemove', (ev) => {
+      const wrap = tip.parentElement;
+      const r = wrap.getBoundingClientRect();
+      tip.style.left = (ev.clientX - r.left) + 'px';
+      tip.style.top  = (ev.clientY - r.top) + 'px';
+    });
+    c.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
   }
 
   // SE-equation overlay placeholder: a future session will draw the fit

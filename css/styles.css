@@ -397,6 +397,18 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .shf-legend-bar > span {
   display: inline-block; width: 6px; height: 100%;
 }
+.shf-tooltip {
+  position: absolute; pointer-events: none;
+  display: none;
+  padding: 7px 10px;
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px; line-height: 1.45;
+  white-space: pre;
+  background: rgba(40, 38, 32, 0.96); color: #f5efdf;
+  border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 3px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  transform: translate(10px, 10px);
+  z-index: 20;
+}
 .plot-filters {
   display: flex; flex-direction: column; gap: 12px;
   padding: 12px; background: #fcf9f1; border: 1px solid var(--rule); border-radius: 3px;
