@@ -946,23 +946,37 @@ function _shfFnRefreshQuality(fn) {
   fn.r2 = q.r2; fn.n = q.n;
 }
 
+// Mutex flag — prevents a second ML-fit click from overlapping the
+// first when MCMC is in flight. The button gets disabled too, but on
+// rapid clicks (or queued events from before the disable lands) we'd
+// otherwise re-enter and stomp on `fn.params` from two chains at once,
+// which was making the algos appear to "get stuck" with NaN params.
+let _shfMlFitInFlight = false;
+
 async function shfFnMlFit(id) {
+  if (_shfMlFitInFlight) return;
   const fn = shfState.functions.find(f => f.id === id);
   if (!fn) return;
+  _shfMlFitInFlight = true;
   const pts = _shfFnPointsForFit(fn);
 
-  // MCMC takes ~2000 iterations × n points — show a "Fitting…" state on
-  // the button so the user knows it's working. Linearised + coord
-  // descent finish before the next paint, so no progress UI needed.
   const isMcmc = shfState.fitAlgo === 'mcmc';
-  const fitBtn = isMcmc ? document.querySelector('.shf-fn-fit-row .plot-reg-btn') : null;
+  const fitBtn = document.querySelector('.shf-fn-fit-row .plot-reg-btn');
   if (fitBtn) {
     fitBtn.disabled = true;
-    fitBtn.textContent = 'Fitting…';
+    if (isMcmc) fitBtn.textContent = 'Fitting…';
   }
+  // Snapshot starting params so we can roll back if the result returns
+  // any NaN — protects later renders / fits from a corrupted chain.
+  const startSnap = Object.assign({}, fn.params);
   let result = null;
-  try { result = await _shfMlFit(pts, fn.params, fn.method); }
-  finally {
+  try {
+    result = await _shfMlFit(pts, fn.params, fn.method);
+  } catch (e) {
+    setStatus('ML fit failed: ' + e.message, 'error');
+    fn.params = startSnap;
+  } finally {
+    _shfMlFitInFlight = false;
     if (fitBtn) {
       fitBtn.disabled = !!fn.locked;
       fitBtn.textContent = 'ML fit';
@@ -975,6 +989,14 @@ async function shfFnMlFit(id) {
       stats.textContent = 'Not enough samples to fit (need 3+ with por, perm, hafwl, sw < 1).';
     }
     return;
+  }
+  // Sanity-check the returned params. A NaN slipping through (extreme
+  // data, numerical underflow on a long MCMC chain) would break every
+  // subsequent fit and render — clamp to defaults instead.
+  for (const k of Object.keys(result.params)) {
+    if (!Number.isFinite(result.params[k])) {
+      result.params[k] = SHF_DEFAULT_PARAMS[k];
+    }
   }
   fn.params = result.params;
   fn.r2 = result.r2; fn.n = result.n;
