@@ -640,11 +640,15 @@ function shfFnSetMethod(id, method) {
   fn.r2 = null; fn.n = 0;
   // Color metric tracks the Swirr predictor: perm method colors by
   // permeability, RQI method colors by √(k/φ). The user can override
-  // afterwards via the Color-by dropdown.
+  // afterwards via the Color-by dropdown. Dispatch a change event so
+  // any listeners (debugging, persistence) see the value flip.
   const colorEl = document.getElementById('shf-color');
   if (colorEl) {
     const target = next === 'perm' ? 'perm' : 'rqi';
-    if (colorEl.value !== target) colorEl.value = target;
+    if (colorEl.value !== target) {
+      colorEl.value = target;
+      colorEl.dispatchEvent(new Event('change'));
+    }
   }
   rebuildShfFunctionEditor();
   refreshShfPanel();
@@ -881,9 +885,14 @@ function rebuildShfFunctionEditor() {
   for (const k of freeKeys) freeWrap.appendChild(_shfBuildSliderRow(fn, k));
   editor.appendChild(freeWrap);
 
-  // Constants header: toggle + (when expanded) a lock icon controlling
-  // editability. The lock is what flips the constants section between
-  // read-only display and editable number inputs.
+  // Toggles row: Constants and Show-equations sit side-by-side, each
+  // taking half the width. Either may expand independently and its
+  // content drops in below.
+  const togglesRow = document.createElement('div');
+  togglesRow.className = 'shf-fn-toggles';
+
+  // Constants toggle + (when expanded) lock icon. Wrap so the lock can
+  // sit inline with the toggle text within its 50% cell.
   const constHead = document.createElement('div');
   constHead.className = 'shf-fn-const-head-wrap';
   const constToggle = document.createElement('button');
@@ -903,7 +912,18 @@ function rebuildShfFunctionEditor() {
     lockBtn.addEventListener('click', shfFnToggleConstantsLock);
     constHead.appendChild(lockBtn);
   }
-  editor.appendChild(constHead);
+  togglesRow.appendChild(constHead);
+
+  // Show-equations toggle (right cell).
+  const eqHead = document.createElement('button');
+  eqHead.type = 'button';
+  eqHead.className = 'shf-fn-const-head' + (shfState.equationsExpanded ? ' open' : '');
+  eqHead.textContent = (shfState.equationsExpanded ? '▾' : '▸') + ' Show equations';
+  eqHead.addEventListener('click', shfFnToggleEquationsExpanded);
+  togglesRow.appendChild(eqHead);
+
+  editor.appendChild(togglesRow);
+
   if (shfState.constantsExpanded) {
     const constWrap = document.createElement('div');
     constWrap.className = 'shf-fn-constants';
@@ -912,15 +932,6 @@ function rebuildShfFunctionEditor() {
     }
     editor.appendChild(constWrap);
   }
-
-  // Show equations toggle. When expanded, the Petrel-style block sits
-  // full-width below.
-  const eqHead = document.createElement('button');
-  eqHead.type = 'button';
-  eqHead.className = 'shf-fn-const-head' + (shfState.equationsExpanded ? ' open' : '');
-  eqHead.textContent = (shfState.equationsExpanded ? '▾' : '▸') + ' Show equations';
-  eqHead.addEventListener('click', shfFnToggleEquationsExpanded);
-  editor.appendChild(eqHead);
   if (shfState.equationsExpanded) {
     editor.appendChild(_shfBuildEquationsBlock(fn));
   }
@@ -1442,10 +1453,11 @@ function _renderShfPlot(points) {
   _renderShfColorBar(_colorMetricLabel(colorBy) + '  (log)', legendLo, legendHi, colorBarTicks);
 }
 
-// Pick `n` reference points whose color-metric values are equally spaced
-// in *log* space (since the colorbar itself is log-scaled). For each
-// target log-value we snap to the nearest real point so the overlay uses
-// actual (por, perm) pairs that exist in the dataset.
+// Pick `n` reference points equally spaced in log of the color metric,
+// anchored at the data maximum. For n=1 only the max point is returned;
+// for n≥2 we take max and step down by (logMax − logMin) / (n − 1) until
+// we land at the min — endpoints inclusive. Each target log-value snaps
+// to the nearest real point in the dataset.
 function _shfPickReferencePoints(points, colorBy, n) {
   if (points.length === 0 || n <= 0) return [];
   const valid = [];
@@ -1455,20 +1467,23 @@ function _shfPickReferencePoints(points, colorBy, n) {
   }
   if (valid.length === 0) return [];
   let minV = Infinity, maxV = -Infinity;
-  for (const e of valid) { if (e.v < minV) minV = e.v; if (e.v > maxV) maxV = e.v; }
-  // Degenerate range: return the median point repeated; visually a single
-  // line, but the caller still gets `n` entries so the count is honored.
-  if (!(minV > 0 && maxV > minV)) {
-    const med = valid[Math.floor(valid.length / 2)].p;
-    return Array(n).fill(med);
+  let maxPoint = valid[0].p;
+  for (const e of valid) {
+    if (e.v < minV) minV = e.v;
+    if (e.v > maxV) { maxV = e.v; maxPoint = e.p; }
+  }
+  // n=1 → just the max. Degenerate range → max repeated.
+  if (n === 1 || !(minV > 0 && maxV > minV)) {
+    return Array(n).fill(maxPoint);
   }
   const lnLo = Math.log(minV);
   const lnHi = Math.log(maxV);
   const out = [];
   for (let i = 0; i < n; i++) {
-    // Interior spacing q = (i+1)/(n+1) so the first and last lines don't
-    // hug the data extremes (often outliers).
-    const q = (i + 1) / (n + 1);
+    // q goes 0..1 across the n lines; i=0 lands at min, i=n-1 lands at
+    // max. Iteration order is min→max so the highest-RQI line draws
+    // last (sits on top of the lower ones in the SVG paint stack).
+    const q = i / (n - 1);
     const target = Math.exp(lnLo + q * (lnHi - lnLo));
     let bestIdx = 0, bestD = Infinity;
     for (let j = 0; j < valid.length; j++) {

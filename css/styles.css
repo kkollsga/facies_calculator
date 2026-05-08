@@ -457,8 +457,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .shf-fn-const-head-wrap {
   display: flex; align-items: center; gap: 6px;
-  margin-top: 2px;
 }
+.shf-fn-const-head-wrap .shf-fn-const-head { flex: 1; }
 .shf-fn-lock {
   display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px;
@@ -539,15 +539,24 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .shf-fn-num:focus, .shf-fn-const-input:focus {
   border-bottom-color: var(--ink);
 }
+.shf-fn-toggles {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 8px; margin-top: 2px;
+}
+.shf-fn-toggles > * { min-width: 0; }
 .shf-fn-const-head {
-  align-self: flex-start;
-  font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+  width: 100%;
+  font-family: 'IBM Plex Mono', monospace; font-size: 10.5px;
   text-transform: uppercase; letter-spacing: 0.08em;
-  padding: 3px 7px; border: none; background: transparent;
+  padding: 5px 10px;
+  border: 1px solid var(--rule); background: #fdfaf3;
   color: var(--ink-soft); cursor: pointer; border-radius: 2px;
   text-align: left;
 }
-.shf-fn-const-head:hover { background: #ece6d8; color: var(--ink); }
+.shf-fn-const-head:hover { background: #f0e6cf; color: var(--ink); }
+.shf-fn-const-head.open {
+  color: var(--ink); border-color: var(--ink); background: #f1ebdb;
+}
 .shf-fn-constants {
   display: grid; grid-template-columns: repeat(4, 1fr);
   gap: 4px 24px;
@@ -584,8 +593,12 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .shf-legend-tick {
   position: absolute; top: -3px; bottom: -3px;
-  width: 1.5px; background: var(--ink);
-  pointer-events: none; transform: translateX(-50%);
+  width: 2px;
+  background: rgba(40, 38, 32, 0.92);
+  pointer-events: none;
+  transform: translateX(-1px);
+  border-radius: 1px;
+  box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.5);
 }
 .shf-tooltip {
   position: absolute; pointer-events: none;
