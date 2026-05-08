@@ -26,10 +26,10 @@ const shfState = {
   // Number of representative (k, φ) lines drawn per visible function
   // — picked at evenly-spaced quantiles of the color metric.
   lineCount: 1,
-  // Editor visibility flag — when true, the active function's constants
-  // (γ, γpc, ω, Δρ, g, fpc, κ, λ) become editable. Free coefficients
-  // (a, b, c, d, c_perm, d_perm) are always editable.
-  showConstants: false,
+  // Constants are read-only by default. The lock icon next to the
+  // "Constants" section header toggles editability for γ, γpc, ω, Δρ, g,
+  // fpc, κ, λ. Free coefficients are always editable.
+  constantsLocked: true,
 };
 
 // ============================================================
@@ -54,12 +54,12 @@ const SHF_DEFAULT_PARAMS = {
 };
 
 const SHF_PARAM_RANGES = {
-  a:        { min: 0.01,  max: 1.0,   step: 0.00001, label: 'a',   desc: 'Sw(J) prefactor' },
-  b:        { min: -3.0,  max: 0.0,   step: 0.00001, label: 'b',   desc: 'Sw(J) exponent' },
-  c:        { min: 0.05,  max: 2.0,   step: 0.00001, label: 'c',   desc: 'Swirr prefactor' },
-  d:        { min: -3.0,  max: 0.0,   step: 0.00001, label: 'd',   desc: 'Swirr exponent' },
-  c_perm:   { min: 0.001, max: 2.0,   step: 0.00001, label: 'cₚ',  desc: 'Swirr-Perm prefactor' },
-  d_perm:   { min: -2.0,  max: 0.0,   step: 0.00001, label: 'dₚ',  desc: 'Swirr-Perm exponent' },
+  a:        { min: 0,     max: 0.5,   step: 0.00001, label: 'a',   desc: 'Sw(J) prefactor' },
+  b:        { min: -2,    max: 0,     step: 0.00001, label: 'b',   desc: 'Sw(J) exponent' },
+  c:        { min: 0,     max: 1,     step: 0.00001, label: 'c',   desc: 'Swirr prefactor' },
+  d:        { min: -2,    max: 0,     step: 0.00001, label: 'd',   desc: 'Swirr exponent' },
+  c_perm:   { min: 0,     max: 1,     step: 0.00001, label: 'cₚ',  desc: 'Swirr-Perm prefactor' },
+  d_perm:   { min: -2,    max: 0,     step: 0.00001, label: 'dₚ',  desc: 'Swirr-Perm exponent' },
   gamma:    { min: 10,    max: 50,    step: 1,       label: 'γ',   desc: 'Interfacial tension (J)' },
   gammapc:  { min: 10,    max: 50,    step: 1,       label: 'γₚc', desc: 'Interfacial tension (Pc)' },
   omega:    { min: 0,     max: 90,    step: 1,       label: 'ω',   desc: 'Contact angle (°)' },
@@ -101,21 +101,25 @@ function _shfSwFromJ(swirr, j, params) {
   return swirr + (1 - swirr) * params.a * Math.pow(Math.max(1e-12, j), params.b);
 }
 
-// Predict Sw at a given (por, perm, hafwl). Returns NaN when any link in
-// the chain produces a non-finite or out-of-range value. Sw is clamped
-// to [0, 1] only at the leaf — intermediate clamping would mask bugs.
+// Predict Sw at a given (por, perm, hafwl). Returns NaN only when an
+// input is invalid; everywhere else we clamp to a physical range so the
+// R² readout and curve overlay degrade gracefully when params produce
+// out-of-band values (instead of silently dropping the point / line).
 function _shfPredictSw(por, perm, hafwl, params, method) {
   if (!(por > 0) || !(perm > 0)) return NaN;
   let swirr;
   if (method === 'perm') swirr = _shfSwirrFromPerm(perm, params);
   else                   swirr = _shfSwirrFromRqi(_shfRqi(perm, por, params), params);
-  if (!Number.isFinite(swirr) || swirr < 0 || swirr > 1) return NaN;
+  if (!Number.isFinite(swirr)) return NaN;
+  // Clamp Swirr — values > 1 mean "rock is at irreducible water", values
+  // < 0 are unphysical. Either way the chain still produces a defined Sw.
+  swirr = Math.max(0, Math.min(1, swirr));
   if (!Number.isFinite(hafwl) || hafwl <= 0) return 1;  // water leg
   const pc = _shfPcFromHeight(hafwl, params);
   if (!Number.isFinite(pc) || pc <= 0) return NaN;
   const j = _shfJ(pc, perm, por, params);
   if (!Number.isFinite(j) || j <= 0) return NaN;
-  const sw = _shfSwFromJ(swirr, j, params);
+  let sw = _shfSwFromJ(swirr, j, params);
   if (!Number.isFinite(sw)) return NaN;
   return Math.max(0, Math.min(1, sw));
 }
@@ -136,22 +140,35 @@ function _shfWeightedSse(points, params, method) {
   return n >= 3 ? s : Infinity;
 }
 
-// Standard R² (unweighted) for reporting — keeps the "% variance explained"
-// interpretation. Computed on the same point set as the fit.
+// Standard R² (unweighted) for reporting — "% variance explained" against
+// the mean of the same valid-prediction subset. Mean has to be computed
+// over *valid* points only, otherwise sst and the residuals don't share
+// a baseline (which is why the previous version always read 0 / NaN).
 function _shfRSquared(points, params, method) {
-  let sumW = 0, n = 0;
-  for (const p of points) sumW += p.sw;
-  if (n === 0 && points.length === 0) return { r2: 0, n: 0 };
-  const mean = sumW / Math.max(1, points.length);
-  let sse = 0, sst = 0, count = 0;
+  if (!points || points.length === 0) return { r2: 0, n: 0 };
+  // First pass: collect predictions, drop invalid samples so mean and sse
+  // are computed against the same set.
+  const valid = [];
   for (const p of points) {
     const pred = _shfPredictSw(p.por, p.perm, p.hafwl, params, method);
     if (!Number.isFinite(pred)) continue;
-    sse += (pred - p.sw) * (pred - p.sw);
-    sst += (p.sw - mean) * (p.sw - mean);
-    count++;
+    valid.push({ sw: p.sw, pred });
   }
-  return { r2: sst > 0 ? Math.max(0, 1 - sse / sst) : 0, n: count };
+  if (valid.length === 0) return { r2: 0, n: 0 };
+  let mean = 0;
+  for (const v of valid) mean += v.sw;
+  mean /= valid.length;
+  let sse = 0, sst = 0;
+  for (const v of valid) {
+    const r = v.sw - v.pred;
+    const t = v.sw - mean;
+    sse += r * r;
+    sst += t * t;
+  }
+  // R² can legitimately go negative when the model fits worse than the
+  // mean — surface that to the user (clamping to 0 hides bad fits).
+  const r2 = sst > 0 ? (1 - sse / sst) : 0;
+  return { r2, n: valid.length };
 }
 
 // 1-D golden-section minimum within [lo, hi]. Pure JS so the panel doesn't
@@ -171,16 +188,124 @@ function _goldenSectionMin(f, lo, hi, tol) {
   return (a + b) / 2;
 }
 
-// ML fit: coordinate descent + golden-section on each free parameter, in
-// passes, until SSE stops improving meaningfully. Constants stay locked
-// — they're physical knowns the user doesn't usually touch. Returns a
-// new params object plus quality stats; doesn't mutate the input.
+// Weighted linear regression y = α + β · x, weights ω. Returns {a: α, b: β}
+// or null if degenerate. Standard normal equations, weighted variant.
+function _wlinFit(pts) {
+  let sw_ = 0, swx = 0, swy = 0, swxx = 0, swxy = 0;
+  for (const p of pts) {
+    const w = p.w || 1;
+    sw_ += w; swx += w*p.x; swy += w*p.y;
+    swxx += w*p.x*p.x; swxy += w*p.x*p.y;
+  }
+  const denom = sw_*swxx - swx*swx;
+  if (Math.abs(denom) < 1e-12) return null;
+  const beta  = (sw_*swxy - swx*swy) / denom;
+  const alpha = (swy - beta*swx) / sw_;
+  return { a: alpha, b: beta };
+}
+
+// Clamp a value to a parameter's [min, max] range.
+function _clampToRange(v, key) {
+  const r = SHF_PARAM_RANGES[key];
+  return Math.max(r.min, Math.min(r.max, v));
+}
+
+// ML fit: linearised 2-stage solve, then a coordinate-descent refinement.
+//
+//   Stage 1 — Swirr model (c, d): bin points by RQI (or k for perm
+//             method), take the p20 of Sw within each bin as the
+//             empirical Swirr asymptote, log-log fit Swirr = c·RQI^d.
+//
+//   Stage 2 — J model (a, b): with Swirr now known per point, the chain
+//             linearises: log((Sw − Swirr)/(1 − Swirr)) = log(a) + b·log(J).
+//             Weighted LS in log-space, weights = 1/Sw².
+//
+//   Stage 3 — Refinement: small budget of coordinate-descent on weighted
+//             SSE in original Sw units to clean up boundary effects from
+//             the log-space fit.
+//
+// Constants (γ, γpc, ω, Δρ, g, fpc, κ, λ) are not touched.
 function _shfMlFit(points, startParams, method) {
-  if (!points || points.length < 3) return null;
-  const free = method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
+  if (!points || points.length < 5) return null;
   const params = Object.assign({}, startParams);
+
+  // ----- Stage 1: Swirr asymptote model -----
+  const isPerm = method === 'perm';
+  const xKey = isPerm ? 'perm' : null;   // perm: use k as predictor
+  const stage1Pts = [];
+  for (const p of points) {
+    const xVal = isPerm ? p.perm : _shfRqi(p.perm, p.por, params);
+    if (!(xVal > 0)) continue;
+    if (!(p.sw > 0 && p.sw < 1)) continue;
+    stage1Pts.push({ x: xVal, sw: p.sw });
+  }
+  if (stage1Pts.length >= 5) {
+    stage1Pts.sort((a, b) => a.x - b.x);
+    const nBins = Math.max(3, Math.min(10, Math.floor(stage1Pts.length / 5)));
+    const binPts = [];
+    for (let i = 0; i < nBins; i++) {
+      const lo = Math.floor(i * stage1Pts.length / nBins);
+      const hi = Math.floor((i + 1) * stage1Pts.length / nBins);
+      const slice = stage1Pts.slice(lo, hi);
+      if (slice.length === 0) continue;
+      // p20 of Sw in this bin → asymptote estimate for that x bucket.
+      // Median x as bin center.
+      const sws = slice.map(s => s.sw).slice().sort((a, b) => a - b);
+      const swirr_emp = sws[Math.floor(sws.length * 0.20)];
+      const xMid = slice[Math.floor(slice.length / 2)].x;
+      if (xMid > 0 && swirr_emp > 0 && swirr_emp < 1) {
+        binPts.push({ x: Math.log(xMid), y: Math.log(swirr_emp), w: 1 });
+      }
+    }
+    const lin = binPts.length >= 3 ? _wlinFit(binPts) : null;
+    if (lin) {
+      // y = log(c) + d · x  →  c = exp(intercept), d = slope
+      const cFit = Math.exp(lin.a);
+      const dFit = lin.b;
+      if (Number.isFinite(cFit) && Number.isFinite(dFit)) {
+        if (isPerm) {
+          params.c_perm = _clampToRange(cFit, 'c_perm');
+          params.d_perm = _clampToRange(dFit, 'd_perm');
+        } else {
+          params.c = _clampToRange(cFit, 'c');
+          params.d = _clampToRange(dFit, 'd');
+        }
+      }
+    }
+  }
+
+  // ----- Stage 2: J model (a, b) -----
+  const stage2Pts = [];
+  for (const p of points) {
+    if (!(p.por > 0 && p.perm > 0 && p.hafwl > 0 && p.sw > 0 && p.sw < 1)) continue;
+    let swirr;
+    if (isPerm) swirr = params.c_perm * Math.pow(p.perm, params.d_perm);
+    else        swirr = params.c * Math.pow(_shfRqi(p.perm, p.por, params), params.d);
+    if (!Number.isFinite(swirr)) continue;
+    swirr = Math.max(0, Math.min(0.999, swirr));
+    if (p.sw <= swirr + 1e-4) continue;   // need Sw > Swirr for log argument > 0
+    const pc = _shfPcFromHeight(p.hafwl, params);
+    if (!(pc > 0)) continue;
+    const j = _shfJ(pc, p.perm, p.por, params);
+    if (!(j > 0)) continue;
+    const num = (p.sw - swirr) / (1 - swirr);
+    if (!(num > 0)) continue;
+    stage2Pts.push({ x: Math.log(j), y: Math.log(num), w: 1 / Math.max(1e-4, p.sw * p.sw) });
+  }
+  if (stage2Pts.length >= 3) {
+    const lin = _wlinFit(stage2Pts);
+    if (lin) {
+      const aFit = Math.exp(lin.a);
+      const bFit = lin.b;
+      if (Number.isFinite(aFit)) params.a = _clampToRange(aFit, 'a');
+      if (Number.isFinite(bFit)) params.b = _clampToRange(bFit, 'b');
+    }
+  }
+
+  // ----- Stage 3: short coord-descent refinement on weighted SSE -----
+  const free = isPerm ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
   let best = _shfWeightedSse(points, params, method);
-  for (let pass = 0; pass < 8; pass++) {
+  for (let pass = 0; pass < 4; pass++) {
     let improved = false;
     for (const k of free) {
       const range = SHF_PARAM_RANGES[k];
@@ -190,15 +315,16 @@ function _shfMlFit(points, startParams, method) {
         params[k] = old;
         return s;
       };
-      const newVal = _goldenSectionMin(probe, range.min, range.max, (range.max - range.min) * 1e-6);
+      const newVal = _goldenSectionMin(probe, range.min, range.max, (range.max - range.min) * 1e-5);
       const oldVal = params[k];
       params[k] = newVal;
       const s = _shfWeightedSse(points, params, method);
       if (s < best - 1e-12) { best = s; improved = true; }
-      else { params[k] = oldVal; }   // golden-section can converge to a worse value at boundaries
+      else { params[k] = oldVal; }
     }
     if (!improved) break;
   }
+
   const quality = _shfRSquared(points, params, method);
   return { params, sse: best, r2: quality.r2, n: quality.n };
 }
@@ -581,8 +707,8 @@ function shfFnSetLineCount(n) {
   Projects.saveDebounced();
 }
 
-function shfFnToggleConstants() {
-  shfState.showConstants = !shfState.showConstants;
+function shfFnToggleConstantsLock() {
+  shfState.constantsLocked = !shfState.constantsLocked;
   rebuildShfFunctionEditor();
   Projects.saveDebounced();
 }
@@ -691,26 +817,34 @@ function rebuildShfFunctionEditor() {
   }
   editor.appendChild(methodRow);
 
-  // Free coefficient sliders
+  // Free coefficient rows: slider + numeric input
   const freeKeys = fn.method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
   const freeWrap = document.createElement('div');
   freeWrap.className = 'shf-fn-sliders';
-  for (const k of freeKeys) freeWrap.appendChild(_shfBuildSliderRow(fn, k));
+  for (const k of freeKeys) freeWrap.appendChild(_shfBuildSliderRow(fn, k, false));
   editor.appendChild(freeWrap);
 
-  // Constants toggle + sliders (collapsed by default)
-  const constToggle = document.createElement('button');
-  constToggle.type = 'button';
-  constToggle.className = 'shf-fn-const-toggle';
-  constToggle.textContent = (shfState.showConstants ? '▾' : '▸') + ' Constants';
-  constToggle.addEventListener('click', shfFnToggleConstants);
-  editor.appendChild(constToggle);
-  if (shfState.showConstants) {
-    const constWrap = document.createElement('div');
-    constWrap.className = 'shf-fn-sliders shf-fn-constants';
-    for (const k of SHF_CONSTANT_PARAMS) constWrap.appendChild(_shfBuildSliderRow(fn, k));
-    editor.appendChild(constWrap);
+  // Constants section — always shown, but rendered read-only with a lock
+  // icon that toggles editability. Click the lock to unlock.
+  const constHead = document.createElement('div');
+  constHead.className = 'shf-fn-const-head';
+  const constLbl = document.createElement('span');
+  constLbl.textContent = 'Constants';
+  constHead.appendChild(constLbl);
+  const lockBtn = document.createElement('button');
+  lockBtn.type = 'button';
+  lockBtn.className = 'shf-fn-lock' + (shfState.constantsLocked ? ' locked' : '');
+  lockBtn.textContent = shfState.constantsLocked ? '🔒' : '🔓';
+  lockBtn.title = shfState.constantsLocked ? 'Unlock constants for editing' : 'Lock constants';
+  lockBtn.addEventListener('click', shfFnToggleConstantsLock);
+  constHead.appendChild(lockBtn);
+  editor.appendChild(constHead);
+  const constWrap = document.createElement('div');
+  constWrap.className = 'shf-fn-sliders shf-fn-constants';
+  for (const k of SHF_CONSTANT_PARAMS) {
+    constWrap.appendChild(_shfBuildSliderRow(fn, k, shfState.constantsLocked));
   }
+  editor.appendChild(constWrap);
 
   // ML fit + stats
   const fitRow = document.createElement('div');
@@ -730,12 +864,15 @@ function rebuildShfFunctionEditor() {
   _updateShfEditorStats();
 }
 
-// One slider row for a parameter on the active function. Hooks the slider
-// event back into shfFnSetParam so live drags update the curve.
-function _shfBuildSliderRow(fn, key) {
+// One row for a parameter on the active function. Three columns:
+// label · slider · numeric input. Both slider and number input are wired
+// to shfFnSetParam, so dragging the slider updates the number and vice
+// versa. When `readOnly` is true (locked constants) the slider and input
+// are disabled — we still render them so the layout doesn't shift.
+function _shfBuildSliderRow(fn, key, readOnly) {
   const range = SHF_PARAM_RANGES[key];
   const row = document.createElement('div');
-  row.className = 'shf-fn-slider-row';
+  row.className = 'shf-fn-slider-row' + (readOnly ? ' readonly' : '');
 
   const lab = document.createElement('span');
   lab.className = 'shf-fn-slider-lbl';
@@ -750,16 +887,39 @@ function _shfBuildSliderRow(fn, key) {
   slider.max = String(range.max);
   slider.step = String(range.step);
   slider.value = String(fn.params[key]);
-  slider.addEventListener('input', () => {
-    valEl.textContent = _shfFmtParam(Number(slider.value));
-    shfFnSetParam(fn.id, key, slider.value);
-  });
+  if (readOnly) slider.disabled = true;
   row.appendChild(slider);
 
-  const valEl = document.createElement('span');
-  valEl.className = 'shf-fn-slider-val';
-  valEl.textContent = _shfFmtParam(fn.params[key]);
-  row.appendChild(valEl);
+  const numInp = document.createElement('input');
+  numInp.type = 'number';
+  numInp.className = 'shf-fn-num';
+  numInp.min = String(range.min);
+  numInp.max = String(range.max);
+  numInp.step = String(range.step);
+  numInp.value = _shfFmtParam(fn.params[key]);
+  if (readOnly) numInp.readOnly = true;
+  row.appendChild(numInp);
+
+  // Sync slider → number → state.
+  slider.addEventListener('input', () => {
+    numInp.value = _shfFmtParam(Number(slider.value));
+    shfFnSetParam(fn.id, key, slider.value);
+  });
+  numInp.addEventListener('input', () => {
+    const v = Number(numInp.value);
+    if (!Number.isFinite(v)) return;
+    // Clamp typed values to the slider range so the slider and number
+    // can't disagree (and so the param stays in physical bounds).
+    const clamped = Math.max(range.min, Math.min(range.max, v));
+    slider.value = String(clamped);
+    shfFnSetParam(fn.id, key, clamped);
+  });
+  // On blur, re-format the number to canonical precision. Mid-typing
+  // the user might enter "0.1" for `a`; we don't want to overwrite that
+  // with "0.10000" before they finish.
+  numInp.addEventListener('blur', () => {
+    numInp.value = _shfFmtParam(Number(numInp.value));
+  });
 
   return row;
 }
@@ -780,8 +940,14 @@ function _updateShfEditorStats() {
   if (!stats) return;
   const fn = shfState.functions.find(f => f.id === shfState.activeFunctionId);
   if (!fn) { stats.style.display = 'none'; return; }
-  if (fn.r2 == null) { stats.style.display = 'none'; return; }
+  if (fn.r2 == null || fn.n === 0) {
+    stats.style.display = '';
+    stats.textContent = 'No usable samples (need points with por, perm, hafwl, and Sw < 1).';
+    return;
+  }
   stats.style.display = '';
+  // Negative R² means the model fits worse than the mean — surface the
+  // value as-is rather than clamping, so the user sees they need to refit.
   stats.textContent = 'R² = ' + fn.r2.toFixed(3) + '   ·   n = ' + fn.n;
 }
 
