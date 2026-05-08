@@ -885,14 +885,13 @@ function rebuildShfFunctionEditor() {
   for (const k of freeKeys) freeWrap.appendChild(_shfBuildSliderRow(fn, k));
   editor.appendChild(freeWrap);
 
-  // Toggles row: Constants and Show-equations sit side-by-side, each
-  // taking half the width. Either may expand independently and its
-  // content drops in below.
-  const togglesRow = document.createElement('div');
-  togglesRow.className = 'shf-fn-toggles';
+  // Single action row hosting (left → right): Constants toggle,
+  // Show-equations toggle, ML fit button, R² readout. Toggles flex
+  // to share the left half; fit button stays compact; stats flow to
+  // the right of the button.
+  const actionRow = document.createElement('div');
+  actionRow.className = 'shf-fn-toggles';
 
-  // Constants toggle + (when expanded) lock icon. Wrap so the lock can
-  // sit inline with the toggle text within its 50% cell.
   const constHead = document.createElement('div');
   constHead.className = 'shf-fn-const-head-wrap';
   const constToggle = document.createElement('button');
@@ -912,17 +911,28 @@ function rebuildShfFunctionEditor() {
     lockBtn.addEventListener('click', shfFnToggleConstantsLock);
     constHead.appendChild(lockBtn);
   }
-  togglesRow.appendChild(constHead);
+  actionRow.appendChild(constHead);
 
-  // Show-equations toggle (right cell).
   const eqHead = document.createElement('button');
   eqHead.type = 'button';
   eqHead.className = 'shf-fn-const-head' + (shfState.equationsExpanded ? ' open' : '');
   eqHead.textContent = (shfState.equationsExpanded ? '▾' : '▸') + ' Show equations';
   eqHead.addEventListener('click', shfFnToggleEquationsExpanded);
-  togglesRow.appendChild(eqHead);
+  actionRow.appendChild(eqHead);
 
-  editor.appendChild(togglesRow);
+  const fitBtn = document.createElement('button');
+  fitBtn.type = 'button';
+  fitBtn.className = 'plot-reg-btn';
+  fitBtn.textContent = 'ML fit';
+  fitBtn.addEventListener('click', () => shfFnMlFit(fn.id));
+  actionRow.appendChild(fitBtn);
+
+  const stats = document.createElement('div');
+  stats.id = 'shf-editor-stats';
+  stats.className = 'shf-fn-editor-stats';
+  actionRow.appendChild(stats);
+
+  editor.appendChild(actionRow);
 
   if (shfState.constantsExpanded) {
     const constWrap = document.createElement('div');
@@ -936,20 +946,6 @@ function rebuildShfFunctionEditor() {
     editor.appendChild(_shfBuildEquationsBlock(fn));
   }
 
-  // Bottom row: ML fit button + R² readout, side-by-side.
-  const bottom = document.createElement('div');
-  bottom.className = 'shf-fn-bottom';
-  const fitBtn = document.createElement('button');
-  fitBtn.type = 'button';
-  fitBtn.className = 'plot-reg-btn';
-  fitBtn.textContent = 'ML fit';
-  fitBtn.addEventListener('click', () => shfFnMlFit(fn.id));
-  bottom.appendChild(fitBtn);
-  const stats = document.createElement('div');
-  stats.id = 'shf-editor-stats';
-  stats.className = 'shf-fn-editor-stats';
-  bottom.appendChild(stats);
-  editor.appendChild(bottom);
   _updateShfEditorStats();
 }
 
