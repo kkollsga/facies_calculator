@@ -603,6 +603,18 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   font-family: 'IBM Plex Mono', monospace; font-size: 10.5px;
   color: var(--ink); min-width: 22px; text-align: right;
 }
+.shf-fn-rand-toggle {
+  font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 4px 10px; border: 1px solid var(--rule);
+  background: #fdfaf3; color: var(--ink-soft); cursor: pointer;
+  border-radius: 2px; flex-shrink: 0; white-space: nowrap;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.shf-fn-rand-toggle:hover { background: #f0e6cf; color: var(--ink); }
+.shf-fn-rand-toggle.on {
+  color: var(--ink); border-color: var(--ink); background: #f1ebdb;
+}
 /* The earlier override that made .plot-reg-btn auto-width inside the
  * combined toggles row needs to apply on the fit row now too. */
 .shf-fn-fit-row .plot-reg-btn,

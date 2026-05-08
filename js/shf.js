@@ -48,7 +48,14 @@ const shfState = {
   //               weighted SSE, no log linearisation. Slower; better
   //               when log-linear assumptions are bad (e.g. heavy
   //               low-Sw clipping).
+  //   'mcmc'    — adaptive Metropolis-Hastings (port of leverett-j).
+  //               Slower; produces P10/P50/P90 uncertainty bands shown
+  //               on each slider's track.
   fitAlgo: 'linear',
+  // Whether ML fit randomises the free coefficients before dispatching
+  // to the algorithm. ON (default) means each click explores a fresh
+  // basin; OFF warm-starts from the current parameter values.
+  randomizeFit: true,
 };
 
 // ============================================================
@@ -969,15 +976,19 @@ async function shfFnMlFit(id) {
   // Snapshot the user's current params so we can roll back if the run
   // returns NaN — protects later renders / fits from a corrupted chain.
   const startSnap = Object.assign({}, fn.params);
-  // Randomise the free coefficients before every fit so repeated
-  // clicks explore different basins. Constants stay put (they're
-  // physical knowns). For MCMC the adaptive warmup happens after this
-  // randomisation — random init, then walk.
+  // Build the start parameters. When the Randomize toggle is on
+  // (default), reset every free coefficient to a uniformly-random
+  // value within its parameter range — repeated clicks explore
+  // different basins. When off, warm-start from the user's current
+  // params. Constants stay put either way (they're physical knowns).
+  // For MCMC, the adaptive warmup walks from this start.
   const startParams = Object.assign({}, fn.params);
-  const freeKeys = fn.method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
-  for (const k of freeKeys) {
-    const r = SHF_PARAM_RANGES[k];
-    startParams[k] = r.min + Math.random() * (r.max - r.min);
+  if (shfState.randomizeFit !== false) {
+    const freeKeys = fn.method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
+    for (const k of freeKeys) {
+      const r = SHF_PARAM_RANGES[k];
+      startParams[k] = r.min + Math.random() * (r.max - r.min);
+    }
   }
   let result = null;
   try {
@@ -1046,6 +1057,12 @@ function shfFnSetR2Bias(v) {
 
 function shfFnSetAlgo(algo) {
   shfState.fitAlgo = (algo === 'coord' || algo === 'mcmc') ? algo : 'linear';
+  Projects.saveDebounced();
+}
+
+function shfFnToggleRandomize() {
+  shfState.randomizeFit = !shfState.randomizeFit;
+  rebuildShfFunctionEditor();
   Projects.saveDebounced();
 }
 
@@ -1322,6 +1339,19 @@ function rebuildShfFunctionEditor() {
     shfFnSetR2Bias(biasSlider.value);
   });
   fitRow.appendChild(biasGroup);
+
+  // Randomize toggle — controls whether shfFnMlFit randomises the free
+  // coefficients before each run. ON (default) = explore; OFF = warm-
+  // start from current params each click.
+  const randBtn = document.createElement('button');
+  randBtn.type = 'button';
+  randBtn.className = 'shf-fn-rand-toggle' + (shfState.randomizeFit !== false ? ' on' : '');
+  randBtn.textContent = 'Randomize';
+  randBtn.title = (shfState.randomizeFit !== false)
+    ? 'ML fit starts from random params each click — click to disable'
+    : 'ML fit warm-starts from current params — click to enable random restarts';
+  randBtn.addEventListener('click', shfFnToggleRandomize);
+  fitRow.appendChild(randBtn);
 
   editor.appendChild(fitRow);
 
