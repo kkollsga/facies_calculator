@@ -214,12 +214,12 @@ function render(results, labels, toggles, hasPorosity, hasPermeability, grouping
     if (showWellCol) {
       const wellTd = document.createElement('td');
       wellTd.className = 'well-c';
-      // Children inherit the well visually from their parent — leave empty.
-      // In hierarchical/state-1 mode the well only labels the first row of
-      // each well group (group-divider pattern). In flat aggregations every
-      // row stands alone, so always print the well; otherwise the column
-      // appears blank (this was the well+facies grouping bug).
-      const showWell = role.kind !== 'facies-child' && (isFirstInGroup || isAggregate);
+      // Print the well only on the first row of each well group; rows
+      // that share the well with the previous row leave the cell blank.
+      // The caller is responsible for setting isFirstInGroup to mark a
+      // well boundary — flat aggregations track previous well, state-1
+      // and hierarchical modes flush per well group.
+      const showWell = role.kind !== 'facies-child' && isFirstInGroup;
       if (showWell) wellTd.textContent = r.well;
       row.appendChild(wellTd);
     }
@@ -468,8 +468,16 @@ function render(results, labels, toggles, hasPorosity, hasPermeability, grouping
     }
     flushHGroup();
   } else {
-    // Non-state-1, non-hierarchical: each rowsView entry is already an aggregated summary
-    for (const r of rowsView) emitDataRow(r, false, true);
+    // Non-state-1, non-hierarchical: each rowsView entry is already an
+    // aggregated summary. Track the previous row's well so the well
+    // column only labels the first row of each well group (e.g. when
+    // grouping by Well + Facies, multiple facies rows share a well).
+    let prevWell = null;
+    for (const r of rowsView) {
+      const isFirstWellRow = r.well !== prevWell;
+      emitDataRow(r, isFirstWellRow, true);
+      prevWell = r.well;
+    }
   }
 
   tbl.appendChild(tbody);
