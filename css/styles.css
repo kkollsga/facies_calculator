@@ -512,6 +512,19 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   width: 12px; height: 12px; background: var(--ink);
   border-radius: 50%; cursor: pointer; border: none;
 }
+.shf-fn-slider:disabled { cursor: not-allowed; }
+.shf-fn-slider:disabled::-webkit-slider-thumb { background: var(--ink-soft); cursor: not-allowed; }
+.shf-fn-slider:disabled::-moz-range-thumb { background: var(--ink-soft); cursor: not-allowed; }
+.shf-fn-num:read-only, .shf-fn-const-input:read-only {
+  cursor: default; color: var(--ink-soft);
+}
+.shf-fn-num:read-only:hover, .shf-fn-const-input:read-only:hover {
+  border-bottom-color: transparent;
+}
+.shf-fn-method-opt.readonly { cursor: not-allowed; opacity: 0.7; }
+.shf-fn-method-opt.readonly input { cursor: not-allowed; }
+.shf-fn-pill-lock { color: var(--ink-soft); }
+.shf-fn-pill-lock.locked { color: var(--ink); }
 /* Subtle inline number editor — no box, no border, no background. A
  * faint underline appears on hover/focus to hint at editability. The
  * native spinner buttons are hidden so they don't eat horizontal space

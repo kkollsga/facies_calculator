@@ -166,6 +166,14 @@ const Projects = {
       constantsExpanded: !!shfState.constantsExpanded,
       constantsLocked: shfState.constantsLocked !== false,
       equationsExpanded: !!shfState.equationsExpanded,
+      // Max HAFWL: empty means auto (shallowest data point); otherwise
+      // a positive number override.
+      maxHafwl: (() => {
+        const el = document.getElementById('shf-max-hafwl');
+        if (!el) return null;
+        const v = Number(el.value);
+        return (el.value === '' || !Number.isFinite(v) || v <= 0) ? null : v;
+      })(),
       activeFunctionId: shfState.activeFunctionId,
       nextFunctionId: shfState.nextFunctionId,
       // SHF function list. Filters are Sets so round-trip via arrays.
@@ -174,6 +182,7 @@ const Projects = {
       functions: (shfState.functions || []).map(fn => ({
         id: fn.id, name: fn.name, color: fn.color,
         visible: fn.visible !== false,
+        locked: !!fn.locked,
         method: fn.method === 'perm' ? 'perm' : 'rqi',
         params: Object.assign({}, fn.params),
         filters: {
@@ -248,6 +257,7 @@ const Projects = {
       name: o.name || ('Function ' + o.id),
       color: o.color || '#c0392b',
       visible: o.visible !== false,
+      locked: !!o.locked,
       method: o.method === 'perm' ? 'perm' : 'rqi',
       // Merge with defaults so a save from an older session that didn't
       // include some constants doesn't surface NaN through the chain.
@@ -262,6 +272,11 @@ const Projects = {
     // Sync DOM controls that aren't reactive to state.
     const linesEl = document.getElementById('shf-lines');
     if (linesEl) linesEl.value = String(shfState.lineCount);
+    const maxHafwlEl = document.getElementById('shf-max-hafwl');
+    if (maxHafwlEl) {
+      const v = Number(sp.maxHafwl);
+      maxHafwlEl.value = (Number.isFinite(v) && v > 0) ? String(v) : '';
+    }
   },
 
   // Debounced persist: pulls UI state and writes to localStorage.

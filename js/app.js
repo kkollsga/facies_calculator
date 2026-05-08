@@ -264,6 +264,10 @@ document.getElementById('shf-toggle-btn').addEventListener('click', () => {
 });
 document.getElementById('shf-color').addEventListener('change', refreshShfPanel);
 document.getElementById('shf-max').addEventListener('input', refreshShfPanel);
+document.getElementById('shf-max-hafwl').addEventListener('input', () => {
+  refreshShfPanel();
+  Projects.saveDebounced();
+});
 document.getElementById('shf-lines').addEventListener('input', (e) => shfFnSetLineCount(e.target.value));
 document.getElementById('shf-fn-add-btn').addEventListener('click', shfFnAdd);
 

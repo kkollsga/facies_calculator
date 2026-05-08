@@ -571,6 +571,10 @@ function _shfFnMakeBlank(name) {
     name: name || ('Function ' + id),
     color: SHF_FN_COLORS[colorIdx],
     visible: true,
+    // Per-function lock — when true the editor's free coefficients,
+    // method radio, constants (always), and ML-fit button become
+    // read-only. Toggled via the lock icon on the pill.
+    locked: false,
     method: 'rqi',
     params: Object.assign({}, SHF_DEFAULT_PARAMS),
     // Snapshot of the user's filter chips at create-time. Auto-fit and r²
@@ -583,6 +587,15 @@ function _shfFnMakeBlank(name) {
     },
     r2: null, n: 0,
   };
+}
+
+function shfFnToggleLocked(id) {
+  const fn = shfState.functions.find(f => f.id === id);
+  if (!fn) return;
+  fn.locked = !fn.locked;
+  rebuildShfFunctionsList();
+  rebuildShfFunctionEditor();
+  Projects.saveDebounced();
 }
 
 function shfFnAdd() {
@@ -733,6 +746,36 @@ function shfFnToggleConstantsLock() {
   Projects.saveDebounced();
 }
 
+// Monochrome eye icon. open=true draws a normal eye; open=false adds
+// a diagonal slash to indicate hidden. stroke="currentColor" so the
+// icon adopts the surrounding button color — replaces the ⌀ glyph
+// fallback that didn't render consistently across fonts.
+function _shfEyeIcon(open) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('width', '14');
+  svg.setAttribute('height', '14');
+  svg.setAttribute('viewBox', '0 0 14 14');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  const outline = document.createElementNS(ns, 'path');
+  outline.setAttribute('d', 'M1 7s2.4-4 6-4 6 4 6 4-2.4 4-6 4-6-4-6-4z');
+  svg.appendChild(outline);
+  const pupil = document.createElementNS(ns, 'circle');
+  pupil.setAttribute('cx', '7'); pupil.setAttribute('cy', '7'); pupil.setAttribute('r', '1.5');
+  svg.appendChild(pupil);
+  if (!open) {
+    const slash = document.createElementNS(ns, 'line');
+    slash.setAttribute('x1', '2'); slash.setAttribute('y1', '2');
+    slash.setAttribute('x2', '12'); slash.setAttribute('y2', '12');
+    svg.appendChild(slash);
+  }
+  return svg;
+}
+
 // Monochrome lock icon as inline SVG. stroke="currentColor" so it picks
 // up the surrounding text color from the parent button — keeps the
 // editor's tone consistent (the colored emoji 🔒/🔓 didn't).
@@ -796,16 +839,24 @@ function rebuildShfFunctionsList() {
     pill.appendChild(nameEl);
 
     pill.addEventListener('click', (e) => {
-      // Clicks on the eye/trash icons handle their own action; everything
-      // else opens the editor for this function.
+      // Clicks on the icon buttons (lock / eye / delete) handle their
+      // own action; everything else opens the editor for this function.
       if (e.target.closest('.shf-fn-icon')) return;
       shfFnSetActive(fn.id);
     });
 
+    const lockBtn = document.createElement('button');
+    lockBtn.type = 'button';
+    lockBtn.className = 'shf-fn-icon shf-fn-pill-lock' + (fn.locked ? ' locked' : '');
+    lockBtn.appendChild(_shfLockIcon(!!fn.locked));
+    lockBtn.title = fn.locked ? 'Unlock equation' : 'Lock equation';
+    lockBtn.addEventListener('click', (e) => { e.stopPropagation(); shfFnToggleLocked(fn.id); });
+    pill.appendChild(lockBtn);
+
     const visBtn = document.createElement('button');
     visBtn.type = 'button';
     visBtn.className = 'shf-fn-icon shf-fn-vis';
-    visBtn.textContent = fn.visible ? '👁' : '⌀';
+    visBtn.appendChild(_shfEyeIcon(!!fn.visible));
     visBtn.title = fn.visible ? 'Hide overlay' : 'Show overlay';
     visBtn.addEventListener('click', (e) => { e.stopPropagation(); shfFnToggleVisibility(fn.id); });
     pill.appendChild(visBtn);
@@ -856,6 +907,8 @@ function rebuildShfFunctionEditor() {
   nameInp.className = 'shf-fn-name-input';
   nameInp.addEventListener('input', () => shfFnRename(fn.id, nameInp.value));
   topbar.appendChild(nameInp);
+
+  const fnLocked = !!fn.locked;
   const methodRow = document.createElement('div');
   methodRow.className = 'shf-fn-method-row';
   const methodLbl = document.createElement('span');
@@ -864,12 +917,14 @@ function rebuildShfFunctionEditor() {
   methodRow.appendChild(methodLbl);
   for (const m of ['rqi', 'perm']) {
     const lab = document.createElement('label');
-    lab.className = 'shf-fn-method-opt' + (fn.method === m ? ' active' : '');
+    lab.className = 'shf-fn-method-opt' + (fn.method === m ? ' active' : '')
+      + (fnLocked ? ' readonly' : '');
     const r = document.createElement('input');
     r.type = 'radio';
     r.name = 'shf-fn-method-' + fn.id;
     r.value = m;
     r.checked = fn.method === m;
+    if (fnLocked) r.disabled = true;
     r.addEventListener('change', () => { if (r.checked) shfFnSetMethod(fn.id, m); });
     lab.appendChild(r);
     lab.appendChild(document.createTextNode(' ' + (m === 'rqi' ? 'RQI' : 'Perm')));
@@ -889,14 +944,14 @@ function rebuildShfFunctionEditor() {
   swjLbl.className = 'shf-fn-coef-row-lbl';
   swjLbl.textContent = 'Sw(J)';
   freeWrap.appendChild(swjLbl);
-  freeWrap.appendChild(_shfBuildSliderRow(fn, freeKeys[0]));
-  freeWrap.appendChild(_shfBuildSliderRow(fn, freeKeys[1]));
+  freeWrap.appendChild(_shfBuildSliderRow(fn, freeKeys[0], fnLocked));
+  freeWrap.appendChild(_shfBuildSliderRow(fn, freeKeys[1], fnLocked));
   const swirrLbl = document.createElement('span');
   swirrLbl.className = 'shf-fn-coef-row-lbl';
   swirrLbl.textContent = 'Swirr';
   freeWrap.appendChild(swirrLbl);
-  freeWrap.appendChild(_shfBuildSliderRow(fn, freeKeys[2]));
-  freeWrap.appendChild(_shfBuildSliderRow(fn, freeKeys[3]));
+  freeWrap.appendChild(_shfBuildSliderRow(fn, freeKeys[2], fnLocked));
+  freeWrap.appendChild(_shfBuildSliderRow(fn, freeKeys[3], fnLocked));
   editor.appendChild(freeWrap);
 
   // Single action row hosting (left → right): Constants toggle,
@@ -938,7 +993,8 @@ function rebuildShfFunctionEditor() {
   fitBtn.type = 'button';
   fitBtn.className = 'plot-reg-btn';
   fitBtn.textContent = 'ML fit';
-  fitBtn.addEventListener('click', () => shfFnMlFit(fn.id));
+  if (fnLocked) fitBtn.disabled = true;
+  fitBtn.addEventListener('click', () => { if (!fnLocked) shfFnMlFit(fn.id); });
   actionRow.appendChild(fitBtn);
 
   const stats = document.createElement('div');
@@ -951,8 +1007,11 @@ function rebuildShfFunctionEditor() {
   if (shfState.constantsExpanded) {
     const constWrap = document.createElement('div');
     constWrap.className = 'shf-fn-constants';
+    // Function-level lock overrides the constants section's own lock —
+    // when the whole equation is locked, no editing is allowed.
+    const constsEditable = !shfState.constantsLocked && !fnLocked;
     for (const k of SHF_CONSTANT_PARAMS) {
-      constWrap.appendChild(_shfBuildConstantRow(fn, k, !shfState.constantsLocked));
+      constWrap.appendChild(_shfBuildConstantRow(fn, k, constsEditable));
     }
     editor.appendChild(constWrap);
   }
@@ -964,11 +1023,12 @@ function rebuildShfFunctionEditor() {
 }
 
 // Row for an editable free coefficient: label · slider · numeric input.
-// Slider and input stay synchronised; both write to fn.params[key].
-function _shfBuildSliderRow(fn, key) {
+// When `disabled` is true (function-level lock) the controls render but
+// can't be moved — keeps layout stable so unlocking doesn't shift cells.
+function _shfBuildSliderRow(fn, key, disabled) {
   const range = SHF_PARAM_RANGES[key];
   const row = document.createElement('div');
-  row.className = 'shf-fn-slider-row';
+  row.className = 'shf-fn-slider-row' + (disabled ? ' readonly' : '');
 
   const lab = document.createElement('span');
   lab.className = 'shf-fn-slider-lbl';
@@ -983,6 +1043,7 @@ function _shfBuildSliderRow(fn, key) {
   slider.max = String(range.max);
   slider.step = String(range.step);
   slider.value = String(fn.params[key]);
+  if (disabled) slider.disabled = true;
   row.appendChild(slider);
 
   const numInp = document.createElement('input');
@@ -992,22 +1053,25 @@ function _shfBuildSliderRow(fn, key) {
   numInp.max = String(range.max);
   numInp.step = String(range.step);
   numInp.value = _shfFmtParam(fn.params[key]);
+  if (disabled) numInp.readOnly = true;
   row.appendChild(numInp);
 
-  slider.addEventListener('input', () => {
-    numInp.value = _shfFmtParam(Number(slider.value));
-    shfFnSetParam(fn.id, key, slider.value);
-  });
-  numInp.addEventListener('input', () => {
-    const v = Number(numInp.value);
-    if (!Number.isFinite(v)) return;
-    const clamped = Math.max(range.min, Math.min(range.max, v));
-    slider.value = String(clamped);
-    shfFnSetParam(fn.id, key, clamped);
-  });
-  numInp.addEventListener('blur', () => {
-    numInp.value = _shfFmtParam(Number(numInp.value));
-  });
+  if (!disabled) {
+    slider.addEventListener('input', () => {
+      numInp.value = _shfFmtParam(Number(slider.value));
+      shfFnSetParam(fn.id, key, slider.value);
+    });
+    numInp.addEventListener('input', () => {
+      const v = Number(numInp.value);
+      if (!Number.isFinite(v)) return;
+      const clamped = Math.max(range.min, Math.min(range.max, v));
+      slider.value = String(clamped);
+      shfFnSetParam(fn.id, key, clamped);
+    });
+    numInp.addEventListener('blur', () => {
+      numInp.value = _shfFmtParam(Number(numInp.value));
+    });
+  }
 
   return row;
 }
@@ -1330,7 +1394,15 @@ function _renderShfPlot(points) {
   let xHi = Math.max(1, Math.max.apply(null, xs));
   // Y-axis pinned at HAFWL = 0 (FWL); below-FWL points are filtered upstream.
   let yLo = 0;
-  let yHi = Math.max.apply(null, ys);
+  // Max HAFWL: user override via the input, otherwise the shallowest
+  // data point's height. The override lets the user extend the chart
+  // upward to inspect the curves' asymptotic Sw → Swirr region beyond
+  // the data.
+  const maxHafwlInput = document.getElementById('shf-max-hafwl');
+  const userMaxHafwl = maxHafwlInput ? Number(maxHafwlInput.value) : NaN;
+  let yHi = (Number.isFinite(userMaxHafwl) && userMaxHafwl > 0)
+    ? userMaxHafwl
+    : Math.max.apply(null, ys);
   if (yHi <= yLo) yHi = yLo + 1;
   // Headroom on top so points don't kiss the axis.
   yHi = yHi + (yHi - yLo) * 0.05;
