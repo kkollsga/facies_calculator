@@ -17,9 +17,191 @@
 const shfState = {
   visible: false,
   filters: { wells: new Set(), zones: new Set(), facies: new Set() },
-  // Brooks-Corey overlay: { swirr, he, lambda, r2, n }. null = no curve drawn.
-  fit: null,
+  // List of saturation-height functions. Each is a Leverett-J equation
+  // with its own free coefficients and (optionally edited) constants.
+  // Mirrors regState shape on the cross-plot.
+  functions: [],
+  activeFunctionId: null,
+  nextFunctionId: 1,
+  // Number of representative (k, φ) lines drawn per visible function
+  // — picked at evenly-spaced quantiles of the color metric.
+  lineCount: 1,
+  // Editor visibility flag — when true, the active function's constants
+  // (γ, γpc, ω, Δρ, g, fpc, κ, λ) become editable. Free coefficients
+  // (a, b, c, d, c_perm, d_perm) are always editable.
+  showConstants: false,
 };
+
+// ============================================================
+// Leverett-J saturation chain (matches /Koding/HTML/leverett-j formulation)
+// ============================================================
+//   RQI    = λ · √(k/φ)
+//   Swirr  = c · RQI^d                             (RQI method)
+//   Swirr  = c_perm · k^d_perm                     (perm method)
+//   Pc     = fpc · (0.001 · Δρ · g · h) / γpc      (psi from height m)
+//   J      = κ · (Pc / (γ · cos ω)) · √(k/φ)
+//   Sw     = Swirr + (1 − Swirr) · a · J^b
+
+const SHF_DEFAULT_PARAMS = {
+  // Free (fittable) — defaults from the leverett-j project's "Cerisa Main"
+  a: 0.22434, b: -0.82188,
+  c: 0.33714, d: -1.05865,
+  c_perm: 0.1, d_perm: -0.1,
+  // Constants (rarely fit, but editable when "Show constants" is on)
+  gamma: 30, gammapc: 22, omega: 30,
+  deltarho: 266, g: 9.81, fpc: 3.141533543,
+  kappa: 0.2166, lambda: 0.0314,
+};
+
+const SHF_PARAM_RANGES = {
+  a:        { min: 0.01,  max: 1.0,   step: 0.00001, label: 'a',   desc: 'Sw(J) prefactor' },
+  b:        { min: -3.0,  max: 0.0,   step: 0.00001, label: 'b',   desc: 'Sw(J) exponent' },
+  c:        { min: 0.05,  max: 2.0,   step: 0.00001, label: 'c',   desc: 'Swirr prefactor' },
+  d:        { min: -3.0,  max: 0.0,   step: 0.00001, label: 'd',   desc: 'Swirr exponent' },
+  c_perm:   { min: 0.001, max: 2.0,   step: 0.00001, label: 'cₚ',  desc: 'Swirr-Perm prefactor' },
+  d_perm:   { min: -2.0,  max: 0.0,   step: 0.00001, label: 'dₚ',  desc: 'Swirr-Perm exponent' },
+  gamma:    { min: 10,    max: 50,    step: 1,       label: 'γ',   desc: 'Interfacial tension (J)' },
+  gammapc:  { min: 10,    max: 50,    step: 1,       label: 'γₚc', desc: 'Interfacial tension (Pc)' },
+  omega:    { min: 0,     max: 90,    step: 1,       label: 'ω',   desc: 'Contact angle (°)' },
+  deltarho: { min: 100,   max: 500,   step: 1,       label: 'Δρ',  desc: 'Density contrast (kg/m³)' },
+  g:        { min: 9.8,   max: 9.82,  step: 0.001,   label: 'g',   desc: 'Gravity' },
+  fpc:      { min: 2,     max: 4,     step: 0.000001,label: 'fₚc', desc: 'Pc unit factor' },
+  kappa:    { min: 0.1,   max: 0.5,   step: 0.0001,  label: 'κ',   desc: 'J unit factor' },
+  lambda:   { min: 0.01,  max: 0.1,   step: 0.0001,  label: 'λ',   desc: 'RQI scale factor' },
+};
+
+// Free coefficients per Swirr method. The other set is hidden so we don't
+// confuse the user with parameters that don't affect their current curve.
+const SHF_FREE_PARAMS_RQI  = ['a', 'b', 'c', 'd'];
+const SHF_FREE_PARAMS_PERM = ['a', 'b', 'c_perm', 'd_perm'];
+const SHF_CONSTANT_PARAMS  = ['gamma', 'gammapc', 'omega', 'deltarho', 'g', 'fpc', 'kappa', 'lambda'];
+
+// 6-color palette for distinct function pills. Reuses the cross-plot's
+// regression palette so the visual language stays consistent.
+const SHF_FN_COLORS = ['#c0392b', '#2980b9', '#27ae60', '#8e44ad', '#d68910', '#16a085'];
+
+function _shfRqi(perm, por, params) {
+  return params.lambda * Math.sqrt(perm / Math.max(1e-12, por));
+}
+function _shfSwirrFromRqi(rqi, params) {
+  return params.c * Math.pow(Math.max(1e-12, rqi), params.d);
+}
+function _shfSwirrFromPerm(perm, params) {
+  return params.c_perm * Math.pow(Math.max(1e-12, perm), params.d_perm);
+}
+function _shfPcFromHeight(h, params) {
+  return params.fpc * (0.001 * params.deltarho * params.g * h) / params.gammapc;
+}
+function _shfJ(pc, perm, por, params) {
+  const omRad = params.omega * Math.PI / 180;
+  return params.kappa * (pc / (params.gamma * Math.cos(omRad)))
+       * Math.sqrt(perm / Math.max(1e-12, por));
+}
+function _shfSwFromJ(swirr, j, params) {
+  return swirr + (1 - swirr) * params.a * Math.pow(Math.max(1e-12, j), params.b);
+}
+
+// Predict Sw at a given (por, perm, hafwl). Returns NaN when any link in
+// the chain produces a non-finite or out-of-range value. Sw is clamped
+// to [0, 1] only at the leaf — intermediate clamping would mask bugs.
+function _shfPredictSw(por, perm, hafwl, params, method) {
+  if (!(por > 0) || !(perm > 0)) return NaN;
+  let swirr;
+  if (method === 'perm') swirr = _shfSwirrFromPerm(perm, params);
+  else                   swirr = _shfSwirrFromRqi(_shfRqi(perm, por, params), params);
+  if (!Number.isFinite(swirr) || swirr < 0 || swirr > 1) return NaN;
+  if (!Number.isFinite(hafwl) || hafwl <= 0) return 1;  // water leg
+  const pc = _shfPcFromHeight(hafwl, params);
+  if (!Number.isFinite(pc) || pc <= 0) return NaN;
+  const j = _shfJ(pc, perm, por, params);
+  if (!Number.isFinite(j) || j <= 0) return NaN;
+  const sw = _shfSwFromJ(swirr, j, params);
+  if (!Number.isFinite(sw)) return NaN;
+  return Math.max(0, Math.min(1, sw));
+}
+
+// Weighted SSE on Sw, using w = 1 / max(eps, Sw²) so the irreducible-water
+// asymptote (low Sw, where the model is supposed to converge to Swirr)
+// gets pulled into the fit instead of being drowned by the high-Sw front.
+function _shfWeightedSse(points, params, method) {
+  let s = 0, n = 0;
+  for (const p of points) {
+    const pred = _shfPredictSw(p.por, p.perm, p.hafwl, params, method);
+    if (!Number.isFinite(pred)) continue;
+    const w = 1 / Math.max(1e-4, p.sw * p.sw);
+    const d = pred - p.sw;
+    s += w * d * d;
+    n++;
+  }
+  return n >= 3 ? s : Infinity;
+}
+
+// Standard R² (unweighted) for reporting — keeps the "% variance explained"
+// interpretation. Computed on the same point set as the fit.
+function _shfRSquared(points, params, method) {
+  let sumW = 0, n = 0;
+  for (const p of points) sumW += p.sw;
+  if (n === 0 && points.length === 0) return { r2: 0, n: 0 };
+  const mean = sumW / Math.max(1, points.length);
+  let sse = 0, sst = 0, count = 0;
+  for (const p of points) {
+    const pred = _shfPredictSw(p.por, p.perm, p.hafwl, params, method);
+    if (!Number.isFinite(pred)) continue;
+    sse += (pred - p.sw) * (pred - p.sw);
+    sst += (p.sw - mean) * (p.sw - mean);
+    count++;
+  }
+  return { r2: sst > 0 ? Math.max(0, 1 - sse / sst) : 0, n: count };
+}
+
+// 1-D golden-section minimum within [lo, hi]. Pure JS so the panel doesn't
+// need a numeric library; converges in ~30 iterations to 1e-5 of (hi-lo).
+function _goldenSectionMin(f, lo, hi, tol) {
+  const phi = (Math.sqrt(5) - 1) / 2;
+  let a = lo, b = hi;
+  let c = b - phi * (b - a);
+  let d = a + phi * (b - a);
+  let fc = f(c), fd = f(d);
+  let iters = 0;
+  while ((b - a) > tol && iters < 80) {
+    if (fc < fd) { b = d; d = c; fd = fc; c = b - phi * (b - a); fc = f(c); }
+    else         { a = c; c = d; fc = fd; d = a + phi * (b - a); fd = f(d); }
+    iters++;
+  }
+  return (a + b) / 2;
+}
+
+// ML fit: coordinate descent + golden-section on each free parameter, in
+// passes, until SSE stops improving meaningfully. Constants stay locked
+// — they're physical knowns the user doesn't usually touch. Returns a
+// new params object plus quality stats; doesn't mutate the input.
+function _shfMlFit(points, startParams, method) {
+  if (!points || points.length < 3) return null;
+  const free = method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
+  const params = Object.assign({}, startParams);
+  let best = _shfWeightedSse(points, params, method);
+  for (let pass = 0; pass < 8; pass++) {
+    let improved = false;
+    for (const k of free) {
+      const range = SHF_PARAM_RANGES[k];
+      const probe = (v) => {
+        const old = params[k]; params[k] = v;
+        const s = _shfWeightedSse(points, params, method);
+        params[k] = old;
+        return s;
+      };
+      const newVal = _goldenSectionMin(probe, range.min, range.max, (range.max - range.min) * 1e-6);
+      const oldVal = params[k];
+      params[k] = newVal;
+      const s = _shfWeightedSse(points, params, method);
+      if (s < best - 1e-12) { best = s; improved = true; }
+      else { params[k] = oldVal; }   // golden-section can converge to a worse value at boundaries
+    }
+    if (!improved) break;
+  }
+  const quality = _shfRSquared(points, params, method);
+  return { params, sse: best, r2: quality.r2, n: quality.n };
+}
 
 let _shfCategoryFp = null;
 // Tracks the last set of categories detected per axis. Used to distinguish
@@ -243,175 +425,371 @@ function _stratifiedSample(arr, n) {
 }
 
 // ============================================================
-// Brooks-Corey saturation-height fit
+// SHF function management (mirrors regression.js shape on the cross-plot)
 // ============================================================
-//   Sw(h) = Swirr + (1 - Swirr) * (he / h)^λ      for h ≥ he
-//   Sw(h) = 1                                      for h < he   (water leg)
-//
-// Auto-fit uses log-log linearisation (linear in λ and log(he) for a fixed
-// Swirr) plus a 1-D grid search over Swirr to bypass the nonlinearity in
-// Swirr. Manual edits drive the curve directly; r² is recomputed on the
-// currently-filtered point set so the user gets a fresh quality readout
-// after either flow.
+// Each function is one Leverett-J equation with its own free coefficients,
+// optional constant overrides, locked filter snapshot for fitting, and a
+// visibility flag. The active function is the one whose editor is open.
 
-function _shfBcSwAt(h, swirr, he, lambda) {
-  if (!(h > 0)) return 1;
-  if (h <= he) return 1;
-  const sw = swirr + (1 - swirr) * Math.pow(he / h, lambda);
-  return Math.max(0, Math.min(1, sw));
-}
-
-function _shfBcQuality(points, swirr, he, lambda) {
-  // Quality computed against the points the user is currently looking at.
-  // Sw=1 / hafwl<=0 are excluded upstream by shfFilteredPoints.
-  if (!points || points.length < 3) return null;
-  let sum = 0;
-  for (const p of points) sum += p.sw;
-  const mean = sum / points.length;
-  let sse = 0, sst = 0;
-  for (const p of points) {
-    const pred = _shfBcSwAt(p.hafwl, swirr, he, lambda);
-    sse += (p.sw - pred) * (p.sw - pred);
-    sst += (p.sw - mean) * (p.sw - mean);
-  }
+function _shfFnMakeBlank(name) {
+  const id = shfState.nextFunctionId++;
+  const colorIdx = (id - 1) % SHF_FN_COLORS.length;
   return {
-    r2: sst > 0 ? Math.max(0, 1 - sse / sst) : 0,
-    n: points.length,
-    sse,
+    id,
+    name: name || ('Function ' + id),
+    color: SHF_FN_COLORS[colorIdx],
+    visible: true,
+    method: 'rqi',
+    params: Object.assign({}, SHF_DEFAULT_PARAMS),
+    // Snapshot of the user's filter chips at create-time. Auto-fit and r²
+    // only look at points matching this filter so the function stays tied
+    // to the data set it was calibrated against.
+    filters: {
+      wells:  new Set(shfState.filters.wells),
+      zones:  new Set(shfState.filters.zones),
+      facies: new Set(shfState.filters.facies),
+    },
+    r2: null, n: 0,
   };
 }
 
-function _fitBrooksCoreyShf(points) {
-  if (!points || points.length < 3) return null;
-  const swArr = points.map(p => p.sw);
-  const hArr  = points.map(p => p.hafwl);
+function shfFnAdd() {
+  const fn = _shfFnMakeBlank();
+  shfState.functions.push(fn);
+  shfState.activeFunctionId = fn.id;
+  rebuildShfFunctionsList();
+  rebuildShfFunctionEditor();
+  refreshShfPanel();
+  Projects.saveDebounced();
+}
 
-  // Search Swirr across a wide physical range. The log-linearisation only
-  // uses observations where (Sw − Swirr) > 0, so a high Swirr candidate
-  // simply uses fewer points; that's fine as long as 3+ remain.
-  const swirrHi = 0.5;
-  const grid = 100;
+function shfFnDelete(id) {
+  const idx = shfState.functions.findIndex(f => f.id === id);
+  if (idx < 0) return;
+  shfState.functions.splice(idx, 1);
+  if (shfState.activeFunctionId === id) shfState.activeFunctionId = null;
+  rebuildShfFunctionsList();
+  rebuildShfFunctionEditor();
+  refreshShfPanel();
+  Projects.saveDebounced();
+}
 
-  let best = null;
-  for (let i = 0; i <= grid; i++) {
-    const swirr = swirrHi * (i / grid);
-    let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
-    for (let j = 0; j < points.length; j++) {
-      const num = swArr[j] - swirr;
-      if (num <= 0) continue;
-      const x = Math.log(hArr[j]);
-      const y = Math.log(num / (1 - swirr));
-      n++; sx += x; sy += y; sxx += x * x; sxy += x * y;
+function shfFnSetActive(id) {
+  shfState.activeFunctionId = (shfState.activeFunctionId === id) ? null : id;
+  rebuildShfFunctionsList();
+  rebuildShfFunctionEditor();
+  Projects.saveDebounced();
+}
+
+function shfFnToggleVisibility(id) {
+  const fn = shfState.functions.find(f => f.id === id);
+  if (!fn) return;
+  fn.visible = !fn.visible;
+  rebuildShfFunctionsList();
+  refreshShfPanel();
+  Projects.saveDebounced();
+}
+
+function shfFnRename(id, name) {
+  const fn = shfState.functions.find(f => f.id === id);
+  if (!fn) return;
+  fn.name = (name || '').trim() || ('Function ' + id);
+  rebuildShfFunctionsList();
+  Projects.saveDebounced();
+}
+
+function shfFnSetMethod(id, method) {
+  const fn = shfState.functions.find(f => f.id === id);
+  if (!fn) return;
+  fn.method = method === 'perm' ? 'perm' : 'rqi';
+  // Quality changes whenever the chain changes; null it out so stale
+  // numbers don't display on the editor.
+  fn.r2 = null; fn.n = 0;
+  rebuildShfFunctionEditor();
+  refreshShfPanel();
+  Projects.saveDebounced();
+}
+
+function shfFnSetParam(id, key, value) {
+  const fn = shfState.functions.find(f => f.id === id);
+  if (!fn) return;
+  const v = Number(value);
+  if (!Number.isFinite(v)) return;
+  fn.params[key] = v;
+  // Live-recompute r² so the editor's stat readout follows the slider.
+  _shfFnRefreshQuality(fn);
+  _updateShfEditorStats();
+  refreshShfPanel();
+  Projects.saveDebounced();
+}
+
+// Reuse the function's locked filters when scoring quality / running the
+// ML fit, so each function is anchored to the data set it was calibrated
+// against (independent of whatever the user has chip-filtered now).
+function _shfFnPointsForFit(fn) {
+  return lastPorPoints.filter(p => {
+    if (fn.filters.wells.size  && !fn.filters.wells.has(p.well))   return false;
+    if (fn.filters.zones.size  && !fn.filters.zones.has(p.zone))   return false;
+    if (fn.filters.facies.size && p.facies != null
+        && !fn.filters.facies.has(p.facies)) return false;
+    return p.por != null && p.por > 0
+        && p.perm != null && p.perm > 0
+        && p.hafwl != null && p.hafwl >= 0
+        && p.sw != null && p.sw < 1;
+  });
+}
+
+function _shfFnRefreshQuality(fn) {
+  const pts = _shfFnPointsForFit(fn);
+  const q = _shfRSquared(pts, fn.params, fn.method);
+  fn.r2 = q.r2; fn.n = q.n;
+}
+
+function shfFnMlFit(id) {
+  const fn = shfState.functions.find(f => f.id === id);
+  if (!fn) return;
+  const pts = _shfFnPointsForFit(fn);
+  const result = _shfMlFit(pts, fn.params, fn.method);
+  if (!result) {
+    const stats = document.getElementById('shf-editor-stats');
+    if (stats) {
+      stats.style.display = '';
+      stats.textContent = 'Not enough samples to fit (need 3+ with por, perm, hafwl, sw < 1).';
     }
-    if (n < 3) continue;
-    const denom = n * sxx - sx * sx;
-    if (Math.abs(denom) < 1e-12) continue;
-    const slope = (n * sxy - sx * sy) / denom;     // = -λ
-    const intercept = (sy - slope * sx) / n;       // = λ * log(he)
-    const lambda = -slope;
-    if (!(lambda > 0)) continue;
-    const he = Math.exp(intercept / lambda);
-    if (!isFinite(he) || he <= 0) continue;
-    const q = _shfBcQuality(points, swirr, he, lambda);
-    if (!q) continue;
-    if (!best || q.sse < best.sse) {
-      best = { swirr, he, lambda, r2: q.r2, n: q.n, sse: q.sse };
-    }
-  }
-  return best;
-}
-
-function _shfFitInputs() {
-  return {
-    swirr: document.getElementById('shf-swirr'),
-    he:    document.getElementById('shf-he'),
-    lambda:document.getElementById('shf-lambda'),
-    stats: document.getElementById('shf-fit-stats'),
-    clear: document.getElementById('shf-fit-clear-btn'),
-  };
-}
-
-function _readShfFitInputs() {
-  const i = _shfFitInputs();
-  const swirr = Number(i.swirr.value);
-  const he = Number(i.he.value);
-  const lambda = Number(i.lambda.value);
-  if (!Number.isFinite(swirr) || swirr < 0 || swirr >= 1) return null;
-  if (!Number.isFinite(he) || he < 0) return null;
-  if (!Number.isFinite(lambda) || lambda <= 0) return null;
-  return { swirr, he, lambda };
-}
-
-function _writeShfFitInputs(fit) {
-  const i = _shfFitInputs();
-  i.swirr.value = Number(fit.swirr).toFixed(3);
-  i.he.value = Number(fit.he).toFixed(3);
-  i.lambda.value = Number(fit.lambda).toFixed(3);
-}
-
-function _updateShfFitStats() {
-  const i = _shfFitInputs();
-  if (!shfState.fit || shfState.fit.r2 == null) {
-    i.stats.style.display = 'none';
-    i.stats.textContent = '';
-    i.clear.style.display = 'none';
     return;
   }
-  i.stats.style.display = '';
-  i.stats.textContent = 'R² = ' + shfState.fit.r2.toFixed(3)
-    + '   ·   n = ' + shfState.fit.n;
-  i.clear.style.display = '';
+  fn.params = result.params;
+  fn.r2 = result.r2; fn.n = result.n;
+  // Also refresh the locked filter snapshot to match what the user is
+  // actually looking at right now — most natural workflow is "filter the
+  // data → ML fit", and they expect the function to track those filters.
+  fn.filters = {
+    wells:  new Set(shfState.filters.wells),
+    zones:  new Set(shfState.filters.zones),
+    facies: new Set(shfState.filters.facies),
+  };
+  rebuildShfFunctionEditor();
+  rebuildShfFunctionsList();
+  refreshShfPanel();
+  Projects.saveDebounced();
 }
 
-// Called by the auto-fit button.
-function shfAutoFit() {
-  const pts = shfFilteredPoints();
-  const fit = _fitBrooksCoreyShf(pts);
-  if (!fit) {
-    const stats = document.getElementById('shf-fit-stats');
-    stats.style.display = '';
-    stats.textContent = 'Not enough usable samples to fit (need 3+ with Sw < 1).';
+function shfFnSetLineCount(n) {
+  const v = Math.max(1, Math.min(10, parseInt(n) || 1));
+  shfState.lineCount = v;
+  refreshShfPanel();
+  Projects.saveDebounced();
+}
+
+function shfFnToggleConstants() {
+  shfState.showConstants = !shfState.showConstants;
+  rebuildShfFunctionEditor();
+  Projects.saveDebounced();
+}
+
+// ============================================================
+// SHF function-list rendering (pills + add button)
+// ============================================================
+
+function rebuildShfFunctionsList() {
+  const list = document.getElementById('shf-fn-list');
+  if (!list) return;
+  list.innerHTML = '';
+  for (const fn of shfState.functions) {
+    const pill = document.createElement('div');
+    pill.className = 'shf-fn-pill'
+      + (fn.id === shfState.activeFunctionId ? ' active' : '')
+      + (fn.visible ? '' : ' hidden');
+    pill.dataset.id = String(fn.id);
+
+    const swatch = document.createElement('span');
+    swatch.className = 'shf-fn-swatch';
+    swatch.style.background = fn.color;
+    pill.appendChild(swatch);
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'shf-fn-name';
+    nameEl.textContent = fn.name;
+    pill.appendChild(nameEl);
+
+    pill.addEventListener('click', (e) => {
+      // Clicks on the eye/trash icons handle their own action; everything
+      // else opens the editor for this function.
+      if (e.target.closest('.shf-fn-icon')) return;
+      shfFnSetActive(fn.id);
+    });
+
+    const visBtn = document.createElement('button');
+    visBtn.type = 'button';
+    visBtn.className = 'shf-fn-icon shf-fn-vis';
+    visBtn.textContent = fn.visible ? '👁' : '⌀';
+    visBtn.title = fn.visible ? 'Hide overlay' : 'Show overlay';
+    visBtn.addEventListener('click', (e) => { e.stopPropagation(); shfFnToggleVisibility(fn.id); });
+    pill.appendChild(visBtn);
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'shf-fn-icon shf-fn-del';
+    delBtn.textContent = '×';
+    delBtn.title = 'Delete';
+    delBtn.addEventListener('click', (e) => { e.stopPropagation(); shfFnDelete(fn.id); });
+    pill.appendChild(delBtn);
+
+    list.appendChild(pill);
+  }
+  // Empty-state hint
+  if (shfState.functions.length === 0) {
+    const hint = document.createElement('div');
+    hint.className = 'shf-fn-empty';
+    hint.textContent = 'No saturation-height functions yet.';
+    list.appendChild(hint);
+  }
+}
+
+// ============================================================
+// SHF function editor (sliders for the active function)
+// ============================================================
+
+function rebuildShfFunctionEditor() {
+  const editor = document.getElementById('shf-fn-editor');
+  if (!editor) return;
+  const fn = shfState.functions.find(f => f.id === shfState.activeFunctionId);
+  if (!fn) {
+    editor.style.display = 'none';
+    editor.innerHTML = '';
     return;
   }
-  shfState.fit = fit;
-  _writeShfFitInputs(fit);
-  _updateShfFitStats();
-  refreshShfPanel();
-  Projects.saveDebounced();
+  editor.style.display = '';
+  editor.innerHTML = '';
+
+  // Name + method row
+  const head = document.createElement('div');
+  head.className = 'shf-fn-editor-head';
+  const nameInp = document.createElement('input');
+  nameInp.type = 'text';
+  nameInp.value = fn.name;
+  nameInp.className = 'shf-fn-name-input';
+  nameInp.addEventListener('input', () => shfFnRename(fn.id, nameInp.value));
+  head.appendChild(nameInp);
+  editor.appendChild(head);
+
+  // Method radio
+  const methodRow = document.createElement('div');
+  methodRow.className = 'shf-fn-method-row';
+  for (const m of ['rqi', 'perm']) {
+    const lab = document.createElement('label');
+    lab.className = 'shf-fn-method-opt' + (fn.method === m ? ' active' : '');
+    const r = document.createElement('input');
+    r.type = 'radio';
+    r.name = 'shf-fn-method-' + fn.id;
+    r.value = m;
+    r.checked = fn.method === m;
+    r.addEventListener('change', () => { if (r.checked) shfFnSetMethod(fn.id, m); });
+    lab.appendChild(r);
+    lab.appendChild(document.createTextNode(' ' + (m === 'rqi' ? 'Swirr from RQI' : 'Swirr from Perm')));
+    methodRow.appendChild(lab);
+  }
+  editor.appendChild(methodRow);
+
+  // Free coefficient sliders
+  const freeKeys = fn.method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
+  const freeWrap = document.createElement('div');
+  freeWrap.className = 'shf-fn-sliders';
+  for (const k of freeKeys) freeWrap.appendChild(_shfBuildSliderRow(fn, k));
+  editor.appendChild(freeWrap);
+
+  // Constants toggle + sliders (collapsed by default)
+  const constToggle = document.createElement('button');
+  constToggle.type = 'button';
+  constToggle.className = 'shf-fn-const-toggle';
+  constToggle.textContent = (shfState.showConstants ? '▾' : '▸') + ' Constants';
+  constToggle.addEventListener('click', shfFnToggleConstants);
+  editor.appendChild(constToggle);
+  if (shfState.showConstants) {
+    const constWrap = document.createElement('div');
+    constWrap.className = 'shf-fn-sliders shf-fn-constants';
+    for (const k of SHF_CONSTANT_PARAMS) constWrap.appendChild(_shfBuildSliderRow(fn, k));
+    editor.appendChild(constWrap);
+  }
+
+  // ML fit + stats
+  const fitRow = document.createElement('div');
+  fitRow.className = 'shf-fn-fit-row';
+  const fitBtn = document.createElement('button');
+  fitBtn.type = 'button';
+  fitBtn.className = 'plot-reg-btn';
+  fitBtn.textContent = 'ML fit on filtered data';
+  fitBtn.addEventListener('click', () => shfFnMlFit(fn.id));
+  fitRow.appendChild(fitBtn);
+  editor.appendChild(fitRow);
+
+  const stats = document.createElement('div');
+  stats.id = 'shf-editor-stats';
+  stats.className = 'shf-fn-editor-stats';
+  editor.appendChild(stats);
+  _updateShfEditorStats();
 }
 
-// Called by the clear button.
-function shfClearFit() {
-  shfState.fit = null;
-  _updateShfFitStats();
-  refreshShfPanel();
-  Projects.saveDebounced();
+// One slider row for a parameter on the active function. Hooks the slider
+// event back into shfFnSetParam so live drags update the curve.
+function _shfBuildSliderRow(fn, key) {
+  const range = SHF_PARAM_RANGES[key];
+  const row = document.createElement('div');
+  row.className = 'shf-fn-slider-row';
+
+  const lab = document.createElement('span');
+  lab.className = 'shf-fn-slider-lbl';
+  lab.title = range.desc;
+  lab.textContent = range.label;
+  row.appendChild(lab);
+
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.className = 'shf-fn-slider';
+  slider.min = String(range.min);
+  slider.max = String(range.max);
+  slider.step = String(range.step);
+  slider.value = String(fn.params[key]);
+  slider.addEventListener('input', () => {
+    valEl.textContent = _shfFmtParam(Number(slider.value));
+    shfFnSetParam(fn.id, key, slider.value);
+  });
+  row.appendChild(slider);
+
+  const valEl = document.createElement('span');
+  valEl.className = 'shf-fn-slider-val';
+  valEl.textContent = _shfFmtParam(fn.params[key]);
+  row.appendChild(valEl);
+
+  return row;
 }
 
-// Called when the user types in any of the three fit inputs.
-function shfFitInputChanged() {
-  const params = _readShfFitInputs();
-  if (!params) return;  // invalid mid-typing, ignore
-  const q = _shfBcQuality(shfFilteredPoints(), params.swirr, params.he, params.lambda);
-  shfState.fit = {
-    swirr: params.swirr, he: params.he, lambda: params.lambda,
-    r2: q ? q.r2 : null, n: q ? q.n : 0,
-  };
-  _updateShfFitStats();
-  refreshShfPanel();
-  Projects.saveDebounced();
+function _shfFmtParam(v) {
+  if (!Number.isFinite(v)) return '—';
+  const a = Math.abs(v);
+  if (a === 0) return '0';
+  if (a >= 100) return v.toFixed(1);
+  if (a >= 10)  return v.toFixed(2);
+  if (a >= 1)   return v.toFixed(3);
+  if (a >= 0.01) return v.toFixed(4);
+  return v.toFixed(5);
 }
 
-// Re-sync inputs to a possibly-loaded shfState.fit (after applyToUI).
+function _updateShfEditorStats() {
+  const stats = document.getElementById('shf-editor-stats');
+  if (!stats) return;
+  const fn = shfState.functions.find(f => f.id === shfState.activeFunctionId);
+  if (!fn) { stats.style.display = 'none'; return; }
+  if (fn.r2 == null) { stats.style.display = 'none'; return; }
+  stats.style.display = '';
+  stats.textContent = 'R² = ' + fn.r2.toFixed(3) + '   ·   n = ' + fn.n;
+}
+
+// Sync editor + list state to the loaded shfState (after applyToUI).
 function syncShfFitInputs() {
-  if (shfState.fit) {
-    _writeShfFitInputs(shfState.fit);
-    // Recompute r² against current filtered points so reload doesn't show
-    // stale stats from the previous session.
-    const q = _shfBcQuality(shfFilteredPoints(), shfState.fit.swirr, shfState.fit.he, shfState.fit.lambda);
-    if (q) { shfState.fit.r2 = q.r2; shfState.fit.n = q.n; }
-  }
-  _updateShfFitStats();
+  for (const fn of shfState.functions) _shfFnRefreshQuality(fn);
+  rebuildShfFunctionsList();
+  rebuildShfFunctionEditor();
 }
 
 // Linear-interpolation percentile (NumPy-default style). Input must be sorted
@@ -453,14 +831,12 @@ function _refreshShfPanelImpl() {
   if (sec.style.display === 'none') return;
 
   const pts = shfFilteredPoints();
-  // Keep the BC fit r² in sync with the currently-filtered point set so the
-  // stats readout reflects what's on screen, not a snapshot from auto-fit.
-  if (shfState.fit) {
-    const q = _shfBcQuality(pts, shfState.fit.swirr, shfState.fit.he, shfState.fit.lambda);
-    if (q) { shfState.fit.r2 = q.r2; shfState.fit.n = q.n; _updateShfFitStats(); }
-  }
+  // Keep r² for each function in sync with whatever the user currently has
+  // selected on the panel (chip filters can change between renders).
+  for (const fn of shfState.functions) _shfFnRefreshQuality(fn);
+  _updateShfEditorStats();
   const maxInput = document.getElementById('shf-max');
-  const maxPts = Math.max(10, parseInt(maxInput.value) || 100);
+  const maxPts = Math.max(10, parseInt(maxInput.value) || 500);
   const sampled = _stratifiedSample(pts, maxPts);
 
   const meta = document.getElementById('shf-meta');
@@ -533,24 +909,31 @@ function _colorMetricLabel(mode) {
 
 function _renderShfPlot(points) {
   const colorBy = document.getElementById('shf-color').value;
-  const scaleBtn = document.getElementById('shf-scale-btn');
-  const isLog = scaleBtn && scaleBtn.dataset.scale === 'log';
   const cvalsRaw = points.map(p => _colorMetric(p, colorBy));
-  // Log mode only meaningful when every value is strictly positive. Both
-  // metrics (RQI and porosity) are >0 in practice, but guard anyway: if any
-  // sample is non-positive, fall back to linear so we don't NaN the ramp.
-  const useLog = isLog && cvalsRaw.every(v => Number.isFinite(v) && v > 0);
+  // Color ramp is always log because both metrics (RQI, porosity) span
+  // orders of magnitude in well data. If any value is non-positive we
+  // fall back to linear so the ramp doesn't NaN.
+  const useLog = cvalsRaw.every(v => Number.isFinite(v) && v > 0);
   const cvals = useLog ? cvalsRaw.map(Math.log) : cvalsRaw;
-  // Color scale clipped to p05–p95 of the (possibly log-transformed) metric so
-  // a handful of bad/error samples can't compress the rainbow into a thin band.
+  // p05–p95 percentile clip prevents a handful of error samples from
+  // compressing the ramp into a thin band; points beyond the bounds
+  // saturate at the ramp ends.
   const sortedC = cvals.slice().sort((a, b) => a - b);
   const cLo = _percentile(sortedC, 0.05);
   const cHi = _percentile(sortedC, 0.95);
   const cRange = (cHi - cLo) || 1;
-  // Legend bounds are reported in the original (untransformed) units so the
-  // numbers next to the colorbar always read like the metric, not log of it.
+  // Legend reads in original units; color metric is mapped through the
+  // (possibly log) scale to find a point's t in [0, 1] for the rainbow.
   const legendLo = useLog ? Math.exp(cLo) : cLo;
   const legendHi = useLog ? Math.exp(cHi) : cHi;
+  // Helper: mapping an original-units color metric value into [0, 1] on
+  // the same ramp the points use. Reused for fit-curve coloring + tick
+  // markers on the color bar.
+  function colorTFromValue(v) {
+    if (!Number.isFinite(v)) return 0;
+    const x = useLog ? (v > 0 ? Math.log(v) : cLo) : v;
+    return Math.max(0, Math.min(1, (x - cLo) / cRange));
+  }
 
   // X = Sw (clipped to [0, max(1, observed)]); Y = HAFWL (linear, low at bottom).
   const xs = points.map(p => p.sw);
@@ -635,31 +1018,76 @@ function _renderShfPlot(points) {
     c.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
   }
 
-  // Brooks-Corey overlay. Sample h across the visible y range and connect
-  // the (Sw(h), h) points; the curve has a kink at h = he where it switches
-  // from the water leg (Sw=1) into the BC tail.
-  if (shfState.fit) {
-    const f = shfState.fit;
-    const N = 160;
-    let d = '';
-    for (let i = 0; i <= N; i++) {
-      const h = yLo + (yHi - yLo) * (i / N);
-      const sw = _shfBcSwAt(h, f.swirr, f.he, f.lambda);
-      const x = xScale(Math.max(xLo, Math.min(xHi, sw)));
-      const y = yScale(h);
-      d += (i === 0 ? 'M' : 'L') + x.toFixed(2) + ',' + y.toFixed(2);
+  // Leverett-J overlay. For each visible function we draw `lineCount`
+  // curves at evenly-spaced quantiles of the color metric, picking real
+  // (k, φ) values from the function's locked filter snapshot so each
+  // curve uses a representative reservoir rock sample. Each curve is
+  // colored using the same ramp as the points, so the user can read off
+  // which RQI / φ stratum the curve belongs to.
+  const colorBarTicks = [];
+  for (const fn of shfState.functions) {
+    if (!fn.visible) continue;
+    const fnPts = _shfFnPointsForFit(fn);
+    if (fnPts.length === 0) continue;
+    const refs = _shfPickReferencePoints(fnPts, colorBy, shfState.lineCount);
+    for (const ref of refs) {
+      const cv = _colorMetric(ref, colorBy);
+      const t  = colorTFromValue(cv);
+      const lineColor = _rainbowColor(t);
+      let d = '';
+      const N = 160;
+      let started = false;
+      for (let i = 0; i <= N; i++) {
+        const h = yLo + (yHi - yLo) * (i / N);
+        const sw = _shfPredictSw(ref.por, ref.perm, h, fn.params, fn.method);
+        if (!Number.isFinite(sw)) continue;
+        const x = xScale(Math.max(xLo, Math.min(xHi, sw)));
+        const y = yScale(h);
+        d += (started ? 'L' : 'M') + x.toFixed(2) + ',' + y.toFixed(2);
+        started = true;
+      }
+      if (!started) continue;
+      // Outline draws first (slightly wider, function-color-tinted dark)
+      // so the colored curve reads cleanly against any background point
+      // density. Single line keeps the overlay legible.
+      svgEl('path', {
+        d, fill: 'none',
+        stroke: '#1a1814', 'stroke-width': 3.0, 'stroke-opacity': 0.55,
+        'stroke-linecap': 'round',
+      }, svg);
+      svgEl('path', {
+        d, fill: 'none',
+        stroke: lineColor, 'stroke-width': 1.8,
+        'stroke-linecap': 'round',
+      }, svg);
+      colorBarTicks.push({ t, label: _shfFmtParam(cv), color: lineColor });
     }
-    svgEl('path', {
-      d, fill: 'none',
-      stroke: '#1f1d18', 'stroke-width': 1.8,
-      'stroke-dasharray': '6,4', 'stroke-linecap': 'round',
-    }, svg);
   }
 
-  _renderShfColorBar(_colorMetricLabel(colorBy) + (useLog ? '  (log)' : ''), legendLo, legendHi);
+  _renderShfColorBar(_colorMetricLabel(colorBy) + '  (log)', legendLo, legendHi, colorBarTicks);
 }
 
-function _renderShfColorBar(label, vMin, vMax) {
+// Pick `n` reference points from `points`, evenly spaced across quantiles
+// of the chosen color metric. Returns the original point objects so the
+// overlay uses real (por, perm) pairs, not synthetic mid-points.
+function _shfPickReferencePoints(points, colorBy, n) {
+  if (points.length === 0 || n <= 0) return [];
+  const sorted = points.slice().sort((a, b) =>
+    _colorMetric(a, colorBy) - _colorMetric(b, colorBy));
+  const out = [];
+  const len = sorted.length;
+  for (let i = 0; i < n; i++) {
+    // Spread quantiles symmetrically: n=1 → median; n=2 → p25/p75;
+    // n=3 → p17/p50/p83; etc. Avoids hugging the extremes which are
+    // often outliers in real well data.
+    const q = (i + 1) / (n + 1);
+    const idx = Math.max(0, Math.min(len - 1, Math.round(q * (len - 1))));
+    out.push(sorted[idx]);
+  }
+  return out;
+}
+
+function _renderShfColorBar(label, vMin, vMax, ticks) {
   const legend = document.getElementById('shf-legend');
   const wrap = document.createElement('div');
   wrap.className = 'shf-legend-wrap';
@@ -674,6 +1102,11 @@ function _renderShfColorBar(label, vMin, vMax) {
   minEl.textContent = fmtTick(vMin);
   wrap.appendChild(minEl);
 
+  // Bar-with-ticks: position absolute child markers over the gradient at
+  // their normalised t. Each marker is a small triangle pointing at the
+  // bar plus a tiny label below.
+  const barWrap = document.createElement('span');
+  barWrap.className = 'shf-legend-barwrap';
   const swatches = document.createElement('span');
   swatches.className = 'shf-legend-bar';
   const N = 32;
@@ -682,7 +1115,17 @@ function _renderShfColorBar(label, vMin, vMax) {
     s.style.background = _rainbowColor(i / (N - 1));
     swatches.appendChild(s);
   }
-  wrap.appendChild(swatches);
+  barWrap.appendChild(swatches);
+  if (Array.isArray(ticks)) {
+    for (const tk of ticks) {
+      const mark = document.createElement('span');
+      mark.className = 'shf-legend-tick';
+      mark.style.left = (tk.t * 100).toFixed(2) + '%';
+      mark.title = tk.label;
+      barWrap.appendChild(mark);
+    }
+  }
+  wrap.appendChild(barWrap);
 
   const maxEl = document.createElement('span');
   maxEl.className = 'shf-legend-num';

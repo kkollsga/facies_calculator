@@ -397,16 +397,107 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .shf-legend-bar > span {
   display: inline-block; width: 6px; height: 100%;
 }
-.shf-scale-toggle {
-  font-family: 'IBM Plex Sans', sans-serif; font-size: 12px;
-  padding: 6px 10px; border: 1px solid var(--rule); background: #fdfaf3;
-  border-radius: 2px; cursor: pointer; color: var(--ink);
-  text-align: left; transition: background .12s, border-color .12s;
+.shf-fn-list {
+  display: flex; flex-direction: column; gap: 4px; margin-top: 4px;
 }
-.shf-scale-toggle:hover { background: #f5eed9; border-color: var(--ink); }
-.shf-scale-toggle[data-scale="log"] {
+.shf-fn-empty {
+  font-size: 10.5px; color: var(--ink-soft); font-style: italic;
+  padding: 8px 4px; text-align: center;
+}
+.shf-fn-pill {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 8px; border: 1px solid var(--rule);
+  background: #fdfaf3; border-radius: 3px;
+  font-size: 11.5px; cursor: pointer; user-select: none;
+}
+.shf-fn-pill:hover { background: #f5eed9; }
+.shf-fn-pill.active {
   background: #f1ebdb; border-color: #5a5142;
   box-shadow: inset 0 0 0 1px #5a5142;
+}
+.shf-fn-pill.hidden { opacity: 0.45; }
+.shf-fn-swatch {
+  width: 14px; height: 3px; border-radius: 1px; flex-shrink: 0;
+}
+.shf-fn-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.shf-fn-icon {
+  width: 18px; height: 18px; border: none; background: transparent;
+  cursor: pointer; padding: 0; color: var(--ink-soft); font-size: 12px;
+  display: flex; align-items: center; justify-content: center; border-radius: 2px;
+}
+.shf-fn-icon:hover { background: #ece6d8; color: var(--ink); }
+.shf-fn-editor {
+  margin-top: 8px; padding: 8px; border: 1px solid var(--rule);
+  background: #fcf9f1; border-radius: 3px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.shf-fn-editor-head { display: flex; gap: 6px; }
+.shf-fn-name-input {
+  flex: 1; font-family: 'IBM Plex Sans', sans-serif; font-size: 12px;
+  padding: 4px 8px; border: 1px solid var(--rule); background: #fff;
+  border-radius: 2px; outline: none; color: var(--ink);
+}
+.shf-fn-name-input:focus { border-color: var(--ink); }
+.shf-fn-method-row {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  font-size: 11px; font-family: 'IBM Plex Mono', monospace;
+}
+.shf-fn-method-opt {
+  display: flex; align-items: center; gap: 4px; cursor: pointer;
+  padding: 3px 7px; border: 1px solid var(--rule); border-radius: 2px;
+  background: #fdfaf3; color: var(--ink-soft);
+}
+.shf-fn-method-opt input { margin: 0; }
+.shf-fn-method-opt.active { color: var(--ink); border-color: var(--ink); background: #fff; }
+.shf-fn-sliders { display: flex; flex-direction: column; gap: 4px; }
+.shf-fn-slider-row {
+  display: grid; grid-template-columns: 30px 1fr 56px;
+  gap: 6px; align-items: center;
+}
+.shf-fn-slider-lbl {
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+  color: var(--ink); text-align: right;
+}
+.shf-fn-slider {
+  -webkit-appearance: none; appearance: none;
+  height: 3px; background: var(--rule); border-radius: 2px; outline: none;
+  cursor: pointer;
+}
+.shf-fn-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 12px; height: 12px; background: var(--ink);
+  border-radius: 50%; cursor: pointer;
+}
+.shf-fn-slider::-moz-range-thumb {
+  width: 12px; height: 12px; background: var(--ink);
+  border-radius: 50%; cursor: pointer; border: none;
+}
+.shf-fn-slider-val {
+  font-family: 'IBM Plex Mono', monospace; font-size: 10.5px;
+  color: var(--ink-soft); text-align: right;
+}
+.shf-fn-const-toggle {
+  align-self: flex-start;
+  font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 3px 7px; border: none; background: transparent;
+  color: var(--ink-soft); cursor: pointer; border-radius: 2px;
+}
+.shf-fn-const-toggle:hover { background: #ece6d8; color: var(--ink); }
+.shf-fn-fit-row { display: flex; }
+.shf-fn-editor-stats {
+  font-size: 10.5px; line-height: 1.35; color: var(--ink-soft);
+  font-style: italic; padding: 0 2px;
+}
+.shf-legend-barwrap {
+  position: relative; display: inline-block; vertical-align: middle;
+}
+.shf-legend-tick {
+  position: absolute; top: -3px; bottom: -3px;
+  width: 1.5px; background: var(--ink);
+  pointer-events: none; transform: translateX(-50%);
 }
 .shf-tooltip {
   position: absolute; pointer-events: none;

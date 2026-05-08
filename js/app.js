@@ -158,7 +158,7 @@ function autoRefresh() {
   // visibility on page reload, doesn't clobber user intent on data flickers.
   syncPlotPanelDisplay();
   syncShfPanelDisplay();
-  // Restore BC fit inputs/stats from any persisted shfState.fit.
+  // Render SHF function pills + editor from any persisted shfState.functions.
   syncShfFitInputs();
 
   const allCodes = new Set();
@@ -264,19 +264,8 @@ document.getElementById('shf-toggle-btn').addEventListener('click', () => {
 });
 document.getElementById('shf-color').addEventListener('change', refreshShfPanel);
 document.getElementById('shf-max').addEventListener('input', refreshShfPanel);
-document.getElementById('shf-scale-btn').addEventListener('click', () => {
-  const btn = document.getElementById('shf-scale-btn');
-  const next = btn.dataset.scale === 'log' ? 'lin' : 'log';
-  btn.dataset.scale = next;
-  btn.textContent = next === 'log' ? 'Log' : 'Linear';
-  refreshShfPanel();
-  Projects.saveDebounced();
-});
-document.getElementById('shf-swirr').addEventListener('input', shfFitInputChanged);
-document.getElementById('shf-he').addEventListener('input', shfFitInputChanged);
-document.getElementById('shf-lambda').addEventListener('input', shfFitInputChanged);
-document.getElementById('shf-fit-btn').addEventListener('click', shfAutoFit);
-document.getElementById('shf-fit-clear-btn').addEventListener('click', shfClearFit);
+document.getElementById('shf-lines').addEventListener('input', (e) => shfFnSetLineCount(e.target.value));
+document.getElementById('shf-fn-add-btn').addEventListener('click', shfFnAdd);
 
 // Inputs collapse bar
 function _updateInputsToggleUI() {

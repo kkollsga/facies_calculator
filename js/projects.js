@@ -150,7 +150,6 @@ const Projects = {
         facies: (_plotPrevDetected.facies || []).slice(),
       },
     };
-    const scaleBtn = document.getElementById('shf-scale-btn');
     p.shfPanel = {
       visible: !!shfState.visible,
       filters: {
@@ -163,12 +162,24 @@ const Projects = {
         zones:  (_shfPrevDetected.zones  || []).slice(),
         facies: (_shfPrevDetected.facies || []).slice(),
       },
-      colorScale: scaleBtn ? scaleBtn.dataset.scale : 'lin',
-      fit: shfState.fit ? {
-        swirr:   shfState.fit.swirr,
-        he:      shfState.fit.he,
-        lambda:  shfState.fit.lambda,
-      } : null,
+      lineCount: shfState.lineCount | 0,
+      showConstants: !!shfState.showConstants,
+      activeFunctionId: shfState.activeFunctionId,
+      nextFunctionId: shfState.nextFunctionId,
+      // SHF function list. Filters are Sets so round-trip via arrays.
+      // Quality stats (r2, n) are derived — recomputed on load — so we
+      // skip persisting them.
+      functions: (shfState.functions || []).map(fn => ({
+        id: fn.id, name: fn.name, color: fn.color,
+        visible: fn.visible !== false,
+        method: fn.method === 'perm' ? 'perm' : 'rqi',
+        params: Object.assign({}, fn.params),
+        filters: {
+          wells:  fn.filters && fn.filters.wells  ? [...fn.filters.wells]  : [],
+          zones:  fn.filters && fn.filters.zones  ? [...fn.filters.zones]  : [],
+          facies: fn.filters && fn.filters.facies ? [...fn.filters.facies] : [],
+        },
+      })),
     };
   },
 
@@ -224,21 +235,29 @@ const Projects = {
       facies: ((sp.prevDetected && sp.prevDetected.facies) || []).slice(),
     };
     _shfCategoryFp = null;
-    const scaleBtn = document.getElementById('shf-scale-btn');
-    if (scaleBtn) {
-      const persistedScale = sp.colorScale === 'log' ? 'log' : 'lin';
-      scaleBtn.dataset.scale = persistedScale;
-      scaleBtn.textContent = persistedScale === 'log' ? 'Log' : 'Linear';
-    }
-    if (sp.fit && typeof sp.fit === 'object') {
-      const swirr = Number(sp.fit.swirr);
-      const he    = Number(sp.fit.he);
-      const lambda = Number(sp.fit.lambda);
-      shfState.fit = (Number.isFinite(swirr) && Number.isFinite(he) && Number.isFinite(lambda))
-        ? { swirr, he, lambda } : null;
-    } else {
-      shfState.fit = null;
-    }
+    shfState.lineCount = Math.max(1, Math.min(10, parseInt(sp.lineCount) || 1));
+    shfState.showConstants = !!sp.showConstants;
+    shfState.activeFunctionId = (sp.activeFunctionId != null) ? sp.activeFunctionId : null;
+    shfState.nextFunctionId = parseInt(sp.nextFunctionId) || 1;
+    shfState.functions = (Array.isArray(sp.functions) ? sp.functions : []).map(o => ({
+      id: o.id,
+      name: o.name || ('Function ' + o.id),
+      color: o.color || '#c0392b',
+      visible: o.visible !== false,
+      method: o.method === 'perm' ? 'perm' : 'rqi',
+      // Merge with defaults so a save from an older session that didn't
+      // include some constants doesn't surface NaN through the chain.
+      params: Object.assign({}, SHF_DEFAULT_PARAMS, o.params || {}),
+      filters: {
+        wells:  new Set((o.filters && o.filters.wells)  || []),
+        zones:  new Set((o.filters && o.filters.zones)  || []),
+        facies: new Set((o.filters && o.filters.facies) || []),
+      },
+      r2: null, n: 0,
+    }));
+    // Sync DOM controls that aren't reactive to state.
+    const linesEl = document.getElementById('shf-lines');
+    if (linesEl) linesEl.value = String(shfState.lineCount);
   },
 
   // Debounced persist: pulls UI state and writes to localStorage.

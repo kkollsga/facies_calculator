@@ -278,8 +278,8 @@
           </select>
         </div>
         <div class="plot-opt-row">
-          <span class="plot-opt-lbl">Scale</span>
-          <button class="shf-scale-toggle" id="shf-scale-btn" type="button" data-scale="lin">Linear</button>
+          <span class="plot-opt-lbl">Lines / fn</span>
+          <input type="number" class="plot-num" id="shf-lines" min="1" max="10" value="1">
         </div>
         <div class="plot-opt-row">
           <span class="plot-opt-lbl">Max points</span>
@@ -288,28 +288,11 @@
 
         <div class="plot-regressions">
           <div class="plot-regressions-head">
-            <span>SE equation overlay</span>
-            <button class="plot-reg-deselect-btn" id="shf-fit-clear-btn" style="display:none;">clear</button>
+            <span>Saturation-height functions</span>
+            <button class="plot-reg-deselect-btn" id="shf-fn-add-btn">+ new</button>
           </div>
-          <div class="plot-reg-add">
-            <div class="plot-reg-mode-hint">
-              Brooks–Corey: Sw = Swirr + (1 − Swirr) · (he / h)<sup>λ</sup>
-            </div>
-            <div class="plot-opt-row">
-              <span class="plot-opt-lbl">Swirr</span>
-              <input type="number" class="plot-num" id="shf-swirr" min="0" max="0.95" step="0.005" value="0.10">
-            </div>
-            <div class="plot-opt-row">
-              <span class="plot-opt-lbl">he</span>
-              <input type="number" class="plot-num" id="shf-he" step="any" value="0.5">
-            </div>
-            <div class="plot-opt-row">
-              <span class="plot-opt-lbl">λ</span>
-              <input type="number" class="plot-num" id="shf-lambda" step="any" value="2">
-            </div>
-            <div class="plot-reg-mode-hint" id="shf-fit-stats" style="display:none;"></div>
-            <button class="plot-reg-btn" id="shf-fit-btn">Auto-fit on filtered</button>
-          </div>
+          <div class="shf-fn-list" id="shf-fn-list"></div>
+          <div class="shf-fn-editor" id="shf-fn-editor" style="display:none;"></div>
         </div>
       </div>
 
