@@ -75,6 +75,50 @@ function rebuildZoneInputs() {
   }
 }
 
+function rebuildFwlInputs() {
+  const panel = document.getElementById('fwl-panel');
+  const container = document.getElementById('fwl-fields');
+  if (!panel || !container) return;
+  // Hide the entire panel when no well needs an FWL — TVDSS-based porosity
+  // input is optional, so keeping the panel out of the layout in the common
+  // case (HAFWL provided or no porosity data at all) is the right default.
+  if (!state.detectedFwlWells || state.detectedFwlWells.length === 0) {
+    panel.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+  panel.style.display = '';
+  container.innerHTML = '';
+  for (const well of state.detectedFwlWells) {
+    const row = document.createElement('div');
+    row.className = 'kv-row';
+    const key = document.createElement('label');
+    key.className = 'kv-key';
+    key.textContent = well;
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = 'any';
+    inp.className = 'kv-input';
+    inp.placeholder = 'TVDSS, e.g. -2580';
+    const cur = state.fwlValues.get(well);
+    if (cur != null && Number.isFinite(cur)) inp.value = String(cur);
+    inp.addEventListener('input', () => {
+      const raw = inp.value.trim();
+      if (raw === '') state.fwlValues.delete(well);
+      else {
+        const v = Number(raw);
+        if (Number.isFinite(v)) state.fwlValues.set(well, v);
+      }
+      Projects.saveDebounced();
+      // FWL flips HAFWL availability per row, which gates the SHF panel —
+      // re-run the pipeline so SHF lights up (or hides) immediately.
+      scheduleAutoRefresh();
+    });
+    row.appendChild(key); row.appendChild(inp);
+    container.appendChild(row);
+  }
+}
+
 // ============================================================
 // Drag-and-drop file support on input panels
 // ============================================================

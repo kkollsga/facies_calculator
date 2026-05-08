@@ -97,8 +97,25 @@ function autoRefresh() {
     const live = new Set(state.detectedZones);
     for (const k of [...state.zoneRenames.keys()]) if (!live.has(k)) state.zoneRenames.delete(k);
   }
+
+  // Wells whose porosity rows carry TVDSS but no HAFWL need a per-well FWL.
+  // For those rows, derive HAFWL = TVDSS − FWL once the user has filled the
+  // FWL input. Rows that already carry HAFWL are left alone.
+  state.detectedFwlWells = por.length > 0 ? porosityWellsNeedingFwl(por) : [];
+  if (state.fwlValues.size > 0) {
+    const live = new Set(state.detectedFwlWells);
+    for (const k of [...state.fwlValues.keys()]) if (!live.has(k)) state.fwlValues.delete(k);
+  }
+  for (const r of por) {
+    if (r.hafwl == null && r.tvdss != null) {
+      const fwl = state.fwlValues.get(r.well);
+      if (fwl != null && Number.isFinite(fwl)) r.hafwl = r.tvdss - fwl;
+    }
+  }
+
   rebuildZoneInputs();
   rebuildLabelInputs();
+  rebuildFwlInputs();
 
   // Need both required inputs; otherwise hide derived UI and surface the
   // empty-state affordances (Run self-tests).

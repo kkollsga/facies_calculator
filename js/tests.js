@@ -307,6 +307,23 @@ function runSelfTests() {
     return 'Por.Eff., PHIE, Porosity, and empty-input all parse correctly';
   });
 
+  test('parsePorosity_tvdss_separate_from_md', () => {
+    // User's pasted format: MD + Depth (TVDSS) coexist; "Depth" must not be
+    // re-aliased to MD. The TVDSS value also gates the FWL panel.
+    const txt = 'Well\tMD\tPor.Eff.\tK\tSw\tDepth\nW1\t2620.061\t0.0632\t0.0873\t1\t-2560.19';
+    const rows = parsePorosity(txt);
+    if (rows.length !== 1) throw new Error('parse failed: ' + rows.length);
+    const r = rows[0];
+    if (Math.abs(r.md - 2620.061) > 1e-6) throw new Error('MD wrong: ' + r.md);
+    if (r.tvdss == null || Math.abs(r.tvdss - (-2560.19)) > 1e-6) throw new Error('TVDSS wrong: ' + r.tvdss);
+    if (r.hafwl != null) throw new Error('HAFWL should be absent before FWL applied');
+    if (r.perm == null) throw new Error('K column not picked up as perm');
+    const need = porosityWellsNeedingFwl(rows);
+    if (need.length !== 1 || need[0] !== 'W1') throw new Error('wells-needing-FWL wrong: ' + JSON.stringify(need));
+    if (porosityRowsHaveShf(rows)) throw new Error('SHF should not be available before HAFWL is derived');
+    return 'TVDSS column kept distinct from MD; FWL is needed before SHF activates';
+  });
+
   test('zone_renames_apply_to_base_surface', () => {
     // Renaming MTC should make the closing row read "Reservoir base"
     const tops = [

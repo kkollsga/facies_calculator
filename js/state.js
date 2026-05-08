@@ -10,8 +10,10 @@
 const state = {
   detectedFacies: [],   // ordered array of facies code strings
   detectedZones: [],    // ordered array of zone name strings
+  detectedFwlWells: [], // wells whose porosity log carries TVDSS but no HAFWL
   faciesLabels: new Map(),   // code -> label
   zoneRenames: new Map(),    // original zone name -> new name
+  fwlValues: new Map(),      // well -> free-water level (TVDSS, same sign convention as input)
 };
 
 // Snapshot of the most recent successful calculation, used by render, plot, and exports.

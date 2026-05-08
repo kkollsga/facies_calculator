@@ -128,6 +128,26 @@ function parsePorosity(text) {
     'water saturation', 'water_saturation', 'sat_w',
   ]);
 
+  // Optional TVDSS column (subsea depth — typically negative going down).
+  // Used as an HAFWL fallback: when TVDSS + per-well FWL are known the app
+  // layer computes HAFWL = TVDSS − FWL. We deliberately skip columns already
+  // claimed by other roles (MD, porosity, perm, etc.) so a header named just
+  // "Depth" alongside "MD" resolves to TVDSS, not a second MD.
+  let tvdssIdx = -1;
+  {
+    const used = new Set([wellIdx, mdIdx, valIdx, permIdx, hafwlIdx, swIdx].filter(i => i >= 0));
+    const candidates = ['tvdss', 'tvd_ss', 'tvd ss', 'tvd', 'depth', 'z', 'subsea'];
+    const lower = headers.map(h => h.trim().toLowerCase());
+    for (let i = 0; i < lower.length && tvdssIdx < 0; i++) {
+      if (used.has(i)) continue;
+      if (candidates.includes(lower[i])) tvdssIdx = i;
+    }
+    for (let i = 0; i < lower.length && tvdssIdx < 0; i++) {
+      if (used.has(i)) continue;
+      for (const c of candidates) if (lower[i].includes(c)) { tvdssIdx = i; break; }
+    }
+  }
+
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const parts = splitDelim(lines[i]);
@@ -148,9 +168,23 @@ function parsePorosity(text) {
       const s = parseFloat((parts[swIdx] || '').trim());
       if (isFinite(s)) row.sw = s;
     }
+    if (tvdssIdx >= 0 && tvdssIdx < parts.length) {
+      const t = parseFloat((parts[tvdssIdx] || '').trim());
+      if (isFinite(t)) row.tvdss = t;
+    }
     rows.push(row);
   }
   return rows;
+}
+
+// Wells that bring TVDSS but no HAFWL — these need a per-well FWL value
+// before the SHF panel can compute HAFWL. Returns a stable, sorted list.
+function porosityWellsNeedingFwl(porRows) {
+  const set = new Set();
+  for (const r of porRows) {
+    if (r.hafwl == null && r.tvdss != null) set.add(r.well);
+  }
+  return [...set].sort((a, b) => String(a).localeCompare(String(b)));
 }
 
 function porosityRowsHavePerm(porRows) {

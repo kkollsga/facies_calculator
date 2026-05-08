@@ -129,6 +129,7 @@ const Projects = {
     p.por = porEl.value;
     p.faciesLabels = Object.fromEntries(state.faciesLabels);
     p.zoneRenames = Object.fromEntries(state.zoneRenames);
+    p.fwlValues = Object.fromEntries(state.fwlValues);
     p.regressions = regState.list.map(_serializeRegression);
     p.regActiveId = regState.activeId;
     p.regNextId = regState.nextId;
@@ -146,6 +147,13 @@ const Projects = {
     porEl.value = p.por || '';
     state.faciesLabels = new Map(Object.entries(p.faciesLabels || {}));
     state.zoneRenames = new Map(Object.entries(p.zoneRenames || {}));
+    // FWL values were stored as plain {well: number}; rebuild a Map preserving
+    // numeric values (Object.entries returns string keys, but values stay typed).
+    state.fwlValues = new Map();
+    for (const [w, v] of Object.entries(p.fwlValues || {})) {
+      const n = Number(v);
+      if (Number.isFinite(n)) state.fwlValues.set(w, n);
+    }
     regState.list = (p.regressions || []).map(_deserializeRegression);
     regState.activeId = (p.regActiveId != null) ? p.regActiveId : null;
     regState.nextId = p.regNextId || 1;
@@ -212,6 +220,7 @@ const Projects = {
       tops: '', facies: '', por: '',
       faciesLabels: faciesLabels || {},
       zoneRenames: {},
+      fwlValues: {},
       regressions: [],
       regActiveId: null,
       regNextId: 1,
