@@ -288,6 +288,7 @@ function _updateInputsToggleUI() {
 document.getElementById('inputs-toggle-btn').addEventListener('click', () => {
   document.getElementById('data-inputs-area').classList.toggle('collapsed');
   _updateInputsToggleUI();
+  Projects.saveDebounced();
 });
 document.getElementById('pt-hist').addEventListener('change', refreshPlotPanel);
 document.getElementById('pt-cross').addEventListener('change', refreshPlotPanel);

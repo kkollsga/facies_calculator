@@ -136,6 +136,11 @@ const Projects = {
     // Pivot table toggles. porosity/permeabilityTouched track whether the
     // user has explicitly flipped those toggles, so the auto-on-when-data-
     // returns logic in autoRefresh respects the user's last choice.
+    // Hide-data-inputs toggle (collapses the tops/facies/por/labels/
+    // zones/fwl panels). Persists per project so reloading lands you in
+    // the same view you left.
+    const inputsArea = document.getElementById('data-inputs-area');
+    p.inputsCollapsed = !!(inputsArea && inputsArea.classList.contains('collapsed'));
     const togPorEl  = document.getElementById('t-porosity');
     const togPermEl = document.getElementById('t-perm');
     p.pivotPanel = {
@@ -232,6 +237,15 @@ const Projects = {
     regState.list = (p.regressions || []).map(_deserializeRegression);
     regState.activeId = (p.regActiveId != null) ? p.regActiveId : null;
     regState.nextId = p.regNextId || 1;
+
+    // Hide-data-inputs collapse state. autoRefresh / hideResultsAndPlot
+    // own the toggle-button visibility (only meaningful when data is
+    // loaded), so we just toggle the .collapsed class on the area here.
+    const inputsArea = document.getElementById('data-inputs-area');
+    if (inputsArea) {
+      if (p.inputsCollapsed) inputsArea.classList.add('collapsed');
+      else inputsArea.classList.remove('collapsed');
+    }
 
     // Pivot panel toggles. Missing fields fall back to the same defaults
     // _afterProjectSwitch used to set explicitly.
@@ -391,6 +405,7 @@ const Projects = {
         porosity: true, permeability: true,
         porosityTouched: false, permeabilityTouched: false,
       },
+      inputsCollapsed: false,
     };
   },
   _newId() {
