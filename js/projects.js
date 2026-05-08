@@ -163,7 +163,8 @@ const Projects = {
         facies: (_shfPrevDetected.facies || []).slice(),
       },
       lineCount: shfState.lineCount | 0,
-      constantsLocked: shfState.constantsLocked !== false,
+      constantsExpanded: !!shfState.constantsExpanded,
+      equationsExpanded: !!shfState.equationsExpanded,
       activeFunctionId: shfState.activeFunctionId,
       nextFunctionId: shfState.nextFunctionId,
       // SHF function list. Filters are Sets so round-trip via arrays.
@@ -236,9 +237,8 @@ const Projects = {
     };
     _shfCategoryFp = null;
     shfState.lineCount = Math.max(1, Math.min(40, parseInt(sp.lineCount) || 10));
-    // constantsLocked defaults to true (locked) when missing — matches new
-    // default behaviour and keeps existing projects safe by default.
-    shfState.constantsLocked = sp.constantsLocked !== false;
+    shfState.constantsExpanded = !!sp.constantsExpanded;
+    shfState.equationsExpanded = !!sp.equationsExpanded;
     shfState.activeFunctionId = (sp.activeFunctionId != null) ? sp.activeFunctionId : null;
     shfState.nextFunctionId = parseInt(sp.nextFunctionId) || 1;
     shfState.functions = (Array.isArray(sp.functions) ? sp.functions : []).map(o => ({

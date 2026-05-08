@@ -27,10 +27,14 @@ const shfState = {
   // picked at log-spaced color-metric values, snapped to nearest real
   // point. Default 10, max 40.
   lineCount: 10,
-  // Constants are read-only by default. The lock icon next to the
-  // "Constants" section header toggles editability for γ, γpc, ω, Δρ, g,
-  // fpc, κ, λ. Free coefficients are always editable.
-  constantsLocked: true,
+  // Constants section is collapsed by default. Click the header to
+  // expand and inspect the eight physical constants (γ, γpc, ω, Δρ, g,
+  // fpc, κ, λ). Constants are read-only — they're not editable here.
+  constantsExpanded: false,
+  // Petrel-style equations section, collapsed by default. When open
+  // shows the full chain with current parameter values substituted —
+  // copy-paste-friendly for Petrel calculator.
+  equationsExpanded: false,
 };
 
 // ============================================================
@@ -55,12 +59,12 @@ const SHF_DEFAULT_PARAMS = {
 };
 
 const SHF_PARAM_RANGES = {
-  a:        { min: 0,     max: 0.5,   step: 0.00001, label: 'a',   desc: 'Sw(J) prefactor' },
-  b:        { min: -2,    max: 0,     step: 0.00001, label: 'b',   desc: 'Sw(J) exponent' },
-  c:        { min: 0,     max: 1,     step: 0.00001, label: 'c',   desc: 'Swirr prefactor' },
-  d:        { min: -2,    max: 0,     step: 0.00001, label: 'd',   desc: 'Swirr exponent' },
-  c_perm:   { min: 0,     max: 1,     step: 0.00001, label: 'cₚ',  desc: 'Swirr-Perm prefactor' },
-  d_perm:   { min: -2,    max: 0,     step: 0.00001, label: 'dₚ',  desc: 'Swirr-Perm exponent' },
+  a:        { min: 0,     max: 0.5,   step: 0.000001,label: 'a',   desc: 'Sw(J) prefactor' },
+  b:        { min: -2,    max: 0,     step: 0.000001,label: 'b',   desc: 'Sw(J) exponent' },
+  c:        { min: 0,     max: 1,     step: 0.000001,label: 'c',   desc: 'Swirr prefactor' },
+  d:        { min: -2,    max: 0,     step: 0.000001,label: 'd',   desc: 'Swirr exponent' },
+  c_perm:   { min: 0,     max: 1,     step: 0.000001,label: 'cₚ',  desc: 'Swirr-Perm prefactor' },
+  d_perm:   { min: -2,    max: 0,     step: 0.000001,label: 'dₚ',  desc: 'Swirr-Perm exponent' },
   gamma:    { min: 10,    max: 50,    step: 1,       label: 'γ',   desc: 'Interfacial tension (J)' },
   gammapc:  { min: 10,    max: 50,    step: 1,       label: 'γₚc', desc: 'Interfacial tension (Pc)' },
   omega:    { min: 0,     max: 90,    step: 1,       label: 'ω',   desc: 'Contact angle (°)' },
@@ -702,8 +706,14 @@ function shfFnSetLineCount(n) {
   Projects.saveDebounced();
 }
 
-function shfFnToggleConstantsLock() {
-  shfState.constantsLocked = !shfState.constantsLocked;
+function shfFnToggleConstantsExpanded() {
+  shfState.constantsExpanded = !shfState.constantsExpanded;
+  rebuildShfFunctionEditor();
+  Projects.saveDebounced();
+}
+
+function shfFnToggleEquationsExpanded() {
+  shfState.equationsExpanded = !shfState.equationsExpanded;
   rebuildShfFunctionEditor();
   Projects.saveDebounced();
 }
@@ -816,30 +826,26 @@ function rebuildShfFunctionEditor() {
   const freeKeys = fn.method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
   const freeWrap = document.createElement('div');
   freeWrap.className = 'shf-fn-sliders';
-  for (const k of freeKeys) freeWrap.appendChild(_shfBuildSliderRow(fn, k, false));
+  for (const k of freeKeys) freeWrap.appendChild(_shfBuildSliderRow(fn, k));
   editor.appendChild(freeWrap);
 
-  // Constants section — always shown, but rendered read-only with a lock
-  // icon that toggles editability. Click the lock to unlock.
-  const constHead = document.createElement('div');
-  constHead.className = 'shf-fn-const-head';
-  const constLbl = document.createElement('span');
-  constLbl.textContent = 'Constants';
-  constHead.appendChild(constLbl);
-  const lockBtn = document.createElement('button');
-  lockBtn.type = 'button';
-  lockBtn.className = 'shf-fn-lock' + (shfState.constantsLocked ? ' locked' : '');
-  lockBtn.textContent = shfState.constantsLocked ? '🔒' : '🔓';
-  lockBtn.title = shfState.constantsLocked ? 'Unlock constants for editing' : 'Lock constants';
-  lockBtn.addEventListener('click', shfFnToggleConstantsLock);
-  constHead.appendChild(lockBtn);
+  // Constants section — collapsible, hidden by default. Click the header
+  // to expand. Constants are read-only display only (no sliders), with
+  // the value shown to the left of the symbol.
+  const constHead = document.createElement('button');
+  constHead.type = 'button';
+  constHead.className = 'shf-fn-const-head' + (shfState.constantsExpanded ? ' open' : '');
+  constHead.textContent = (shfState.constantsExpanded ? '▾' : '▸') + ' Constants';
+  constHead.addEventListener('click', shfFnToggleConstantsExpanded);
   editor.appendChild(constHead);
-  const constWrap = document.createElement('div');
-  constWrap.className = 'shf-fn-sliders shf-fn-constants';
-  for (const k of SHF_CONSTANT_PARAMS) {
-    constWrap.appendChild(_shfBuildSliderRow(fn, k, shfState.constantsLocked));
+  if (shfState.constantsExpanded) {
+    const constWrap = document.createElement('div');
+    constWrap.className = 'shf-fn-constants';
+    for (const k of SHF_CONSTANT_PARAMS) {
+      constWrap.appendChild(_shfBuildConstantRow(fn, k));
+    }
+    editor.appendChild(constWrap);
   }
-  editor.appendChild(constWrap);
 
   // ML fit + stats
   const fitRow = document.createElement('div');
@@ -857,17 +863,27 @@ function rebuildShfFunctionEditor() {
   stats.className = 'shf-fn-editor-stats';
   editor.appendChild(stats);
   _updateShfEditorStats();
+
+  // Show equations toggle — collapsed by default. When expanded, drops
+  // a copy-pasteable block of Petrel-calculator-style expressions with
+  // all current parameter values substituted in.
+  const eqHead = document.createElement('button');
+  eqHead.type = 'button';
+  eqHead.className = 'shf-fn-const-head' + (shfState.equationsExpanded ? ' open' : '');
+  eqHead.textContent = (shfState.equationsExpanded ? '▾' : '▸') + ' Show equations';
+  eqHead.addEventListener('click', shfFnToggleEquationsExpanded);
+  editor.appendChild(eqHead);
+  if (shfState.equationsExpanded) {
+    editor.appendChild(_shfBuildEquationsBlock(fn));
+  }
 }
 
-// One row for a parameter on the active function. Three columns:
-// label · slider · numeric input. Both slider and number input are wired
-// to shfFnSetParam, so dragging the slider updates the number and vice
-// versa. When `readOnly` is true (locked constants) the slider and input
-// are disabled — we still render them so the layout doesn't shift.
-function _shfBuildSliderRow(fn, key, readOnly) {
+// Row for an editable free coefficient: label · slider · numeric input.
+// Slider and input stay synchronised; both write to fn.params[key].
+function _shfBuildSliderRow(fn, key) {
   const range = SHF_PARAM_RANGES[key];
   const row = document.createElement('div');
-  row.className = 'shf-fn-slider-row' + (readOnly ? ' readonly' : '');
+  row.className = 'shf-fn-slider-row';
 
   const lab = document.createElement('span');
   lab.className = 'shf-fn-slider-lbl';
@@ -882,7 +898,6 @@ function _shfBuildSliderRow(fn, key, readOnly) {
   slider.max = String(range.max);
   slider.step = String(range.step);
   slider.value = String(fn.params[key]);
-  if (readOnly) slider.disabled = true;
   row.appendChild(slider);
 
   const numInp = document.createElement('input');
@@ -892,10 +907,8 @@ function _shfBuildSliderRow(fn, key, readOnly) {
   numInp.max = String(range.max);
   numInp.step = String(range.step);
   numInp.value = _shfFmtParam(fn.params[key]);
-  if (readOnly) numInp.readOnly = true;
   row.appendChild(numInp);
 
-  // Sync slider → number → state.
   slider.addEventListener('input', () => {
     numInp.value = _shfFmtParam(Number(slider.value));
     shfFnSetParam(fn.id, key, slider.value);
@@ -903,20 +916,77 @@ function _shfBuildSliderRow(fn, key, readOnly) {
   numInp.addEventListener('input', () => {
     const v = Number(numInp.value);
     if (!Number.isFinite(v)) return;
-    // Clamp typed values to the slider range so the slider and number
-    // can't disagree (and so the param stays in physical bounds).
     const clamped = Math.max(range.min, Math.min(range.max, v));
     slider.value = String(clamped);
     shfFnSetParam(fn.id, key, clamped);
   });
-  // On blur, re-format the number to canonical precision. Mid-typing
-  // the user might enter "0.1" for `a`; we don't want to overwrite that
-  // with "0.10000" before they finish.
   numInp.addEventListener('blur', () => {
     numInp.value = _shfFmtParam(Number(numInp.value));
   });
 
   return row;
+}
+
+// Read-only display row for a constant: value · symbol. Two columns,
+// value right-aligned on the left. No box / border — just text — so
+// the constants section reads like a reference table, not editable
+// inputs that pretend they aren't.
+function _shfBuildConstantRow(fn, key) {
+  const range = SHF_PARAM_RANGES[key];
+  const row = document.createElement('div');
+  row.className = 'shf-fn-const-row';
+  const valEl = document.createElement('span');
+  valEl.className = 'shf-fn-const-val';
+  valEl.textContent = _shfFmtParam(fn.params[key]);
+  row.appendChild(valEl);
+  const lblEl = document.createElement('span');
+  lblEl.className = 'shf-fn-const-lbl';
+  lblEl.title = range.desc;
+  lblEl.textContent = range.label;
+  row.appendChild(lblEl);
+  return row;
+}
+
+// Petrel-friendly formatting for a number — no unnecessary trailing
+// zeros, no scientific notation; numbers paste cleanly into the
+// Petrel calculator.
+function _shfFmtPetrel(v) {
+  if (!Number.isFinite(v)) return 'NaN';
+  // 6-sig-fig is enough for the parameter ranges we expose.
+  let s = Number(v).toPrecision(6);
+  // Strip trailing zeros after a decimal point and a trailing dot.
+  if (s.indexOf('.') >= 0 && s.indexOf('e') < 0) {
+    s = s.replace(/0+$/, '').replace(/\.$/, '');
+  }
+  // toPrecision can use scientific for very small/large; for our
+  // domain (10^-6 .. 10^3) we don't expect that, but guard anyway.
+  if (s.indexOf('e') >= 0) s = Number(v).toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
+  return s;
+}
+
+// Build the chain of Petrel-style calculator equations for the given
+// function. Multi-line; each line is a copy-pasteable expression with
+// constants substituted.
+function _shfBuildEquationsBlock(fn) {
+  const p = fn.params;
+  const fmt = _shfFmtPetrel;
+  const omegaRad = (p.omega * Math.PI / 180);
+  const lines = [
+    'RQI = ' + fmt(p.lambda) + ' * Sqrt(Perm / Por)',
+    (fn.method === 'perm'
+      ? 'Swirr = ' + fmt(p.c_perm) + ' * Pow(Perm, ' + fmt(p.d_perm) + ')'
+      : 'Swirr = ' + fmt(p.c) + ' * Pow(RQI, ' + fmt(p.d) + ')'),
+    'Pc = ' + fmt(p.fpc) + ' * (0.001 * ' + fmt(p.deltarho) + ' * ' + fmt(p.g) + ' * HAFWL) / ' + fmt(p.gammapc),
+    'J = ' + fmt(p.kappa) + ' * (Pc / (' + fmt(p.gamma) + ' * Cos(' + fmt(omegaRad) + '))) * Sqrt(Perm / Por)',
+    'Sw = Swirr + (1 - Swirr) * ' + fmt(p.a) + ' * Pow(J, ' + fmt(p.b) + ')',
+  ];
+  const wrap = document.createElement('div');
+  wrap.className = 'shf-fn-equations';
+  const pre = document.createElement('pre');
+  pre.className = 'shf-fn-equations-pre';
+  pre.textContent = lines.join('\n');
+  wrap.appendChild(pre);
+  return wrap;
 }
 
 function _shfFmtParam(v) {
@@ -1042,6 +1112,36 @@ function _ensureShfTooltipEl() {
 // HTML tooltip body. Two label/value pairs per row in a 4-column grid; the
 // well name spans both columns at the top. Values fall back to '—' when
 // the source row didn't carry the column.
+// Tooltip body for hovering the function-overlay curves. Each line is a
+// fixed (por, perm) traversed across HAFWL — so √(k/φ) and Swirr are
+// constants of the line, while Sw and HAFWL track the cursor along it.
+// Swmov = Sw − Swirr (mobile water saturation).
+function _shfLineTooltipHtml(fn, ref, h, sw) {
+  const num = (v, d) => (v == null || !isFinite(v)) ? '—' : Number(v).toFixed(d);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  const sqrtKPhi = (ref.por > 0 && ref.perm > 0)
+    ? Math.sqrt(ref.perm / ref.por) : null;
+  let swirr;
+  if (fn.method === 'perm') swirr = fn.params.c_perm * Math.pow(Math.max(1e-12, ref.perm), fn.params.d_perm);
+  else                      swirr = fn.params.c * Math.pow(Math.max(1e-12, _shfRqi(ref.perm, ref.por, fn.params)), fn.params.d);
+  if (Number.isFinite(swirr)) swirr = Math.max(0, Math.min(1, swirr));
+  const swmov = (Number.isFinite(swirr) && Number.isFinite(sw))
+    ? Math.max(0, sw - swirr) : null;
+  const pairs = [
+    ['√(k/φ)', num(sqrtKPhi, 3)],
+    ['Swirr',  num(swirr, 4)],
+    ['Swmov',  num(swmov, 4)],
+    ['Sw',     num(sw, 4)],
+    ['HAFWL',  num(h, 2)],
+  ];
+  let body = '';
+  for (const [k, v] of pairs) {
+    body += '<span class="tt-k">' + esc(k) + '</span><span class="tt-v">' + esc(v) + '</span>';
+  }
+  return '<div class="tt-name">' + esc(fn.name) + '</div>'
+       + '<div class="tt-grid">' + body + '</div>';
+}
+
 function _shfTooltipHtml(p) {
   const num = (v, d) => (v == null || !isFinite(v)) ? '—' : Number(v).toFixed(d);
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -1180,12 +1280,11 @@ function _renderShfPlot(points) {
   }
 
   // Leverett-J overlay. For each visible function we draw `lineCount`
-  // curves at evenly-spaced quantiles of the color metric, picking real
-  // (k, φ) values from the function's locked filter snapshot so each
-  // curve uses a representative reservoir rock sample. Each curve is
-  // colored using the same ramp as the points, so the user can read off
-  // which RQI / φ stratum the curve belongs to.
+  // curves picking representative (k, φ) points at evenly-spaced log
+  // values of the color metric. Each curve also gets a wide invisible
+  // hit-path layered on top so hover tooltips light up easily.
   const colorBarTicks = [];
+  // Tooltip element already obtained above for the points loop; reuse `tip`.
   for (const fn of shfState.functions) {
     if (!fn.visible) continue;
     const fnPts = _shfFnPointsForFit(fn);
@@ -1195,7 +1294,10 @@ function _renderShfPlot(points) {
       const cv = _colorMetric(ref, colorBy);
       const t  = colorTFromValue(cv);
       const lineColor = _rainbowColor(t);
-      let d = '';
+      // Walk h, store screen-coord samples + the (h, sw) values so the
+      // hover handler can find the closest point and read its values.
+      const samples = [];
+      let dPath = '';
       const N = 160;
       let started = false;
       for (let i = 0; i <= N; i++) {
@@ -1204,23 +1306,50 @@ function _renderShfPlot(points) {
         if (!Number.isFinite(sw)) continue;
         const x = xScale(Math.max(xLo, Math.min(xHi, sw)));
         const y = yScale(h);
-        d += (started ? 'L' : 'M') + x.toFixed(2) + ',' + y.toFixed(2);
+        dPath += (started ? 'L' : 'M') + x.toFixed(2) + ',' + y.toFixed(2);
         started = true;
+        samples.push({ x, y, h, sw });
       }
       if (!started) continue;
-      // Outline draws first (slightly wider, function-color-tinted dark)
-      // so the colored curve reads cleanly against any background point
-      // density. Single line keeps the overlay legible.
+      // Subtle drop-shadow via the CSS filter pipeline (modern browsers
+      // apply it on SVG elements). Replaces the previous dark outline
+      // path which was too heavy and dirtied the rainbow colors.
       svgEl('path', {
-        d, fill: 'none',
-        stroke: '#1a1814', 'stroke-width': 3.0, 'stroke-opacity': 0.55,
-        'stroke-linecap': 'round',
-      }, svg);
-      svgEl('path', {
-        d, fill: 'none',
+        d: dPath, fill: 'none',
         stroke: lineColor, 'stroke-width': 1.8,
         'stroke-linecap': 'round',
+        style: 'filter: drop-shadow(0 1px 1.2px rgba(0, 0, 0, 0.35));',
       }, svg);
+      // Wide invisible hit-path so the user doesn't need pixel-perfect
+      // hover. Mouse events fire on this; we look up the closest sample
+      // and populate the same tooltip overlay used for points.
+      const hit = svgEl('path', {
+        d: dPath, fill: 'none',
+        stroke: 'transparent', 'stroke-width': 12,
+        'stroke-linecap': 'round',
+      }, svg);
+      hit.style.cursor = 'crosshair';
+      hit.addEventListener('mousemove', (ev) => {
+        const pt = svg.createSVGPoint();
+        pt.x = ev.clientX; pt.y = ev.clientY;
+        const ctm = svg.getScreenCTM();
+        if (!ctm) return;
+        const local = pt.matrixTransform(ctm.inverse());
+        let best = null, bestD = Infinity;
+        for (const s of samples) {
+          const dx = s.x - local.x, dy = s.y - local.y;
+          const d2 = dx*dx + dy*dy;
+          if (d2 < bestD) { bestD = d2; best = s; }
+        }
+        if (!best || !tip) return;
+        tip.innerHTML = _shfLineTooltipHtml(fn, ref, best.h, best.sw);
+        tip.style.display = 'block';
+        const wrap = tip.parentElement;
+        const r = wrap.getBoundingClientRect();
+        tip.style.left = (ev.clientX - r.left) + 'px';
+        tip.style.top  = (ev.clientY - r.top) + 'px';
+      });
+      hit.addEventListener('mouseleave', () => { if (tip) tip.style.display = 'none'; });
       colorBarTicks.push({ t, label: _shfFmtParam(cv), color: lineColor });
     }
   }
