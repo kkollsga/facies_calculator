@@ -234,12 +234,49 @@ document.getElementById('csv-btn').addEventListener('click', () => {
   URL.revokeObjectURL(url);
 });
 
-document.getElementById('copy-btn').addEventListener('click', async () => {
+async function copyPivotAsTSV(btn) {
   if (!lastResults) return;
-  const tsv = buildTSV(lastResults, lastFacies, lastLabels, currentToggles(), lastHasPorosity, lastHasPermeability, currentGrouping());
-  try { await navigator.clipboard.writeText(tsv); setStatus('TSV copied to clipboard.', 'ok'); }
-  catch (e) { setStatus('Copy failed: ' + e.message, 'error'); }
-});
+  const tsv = buildTSV(lastResults, lastFacies, lastLabels,
+    currentToggles(), lastHasPorosity, lastHasPermeability, currentGrouping());
+  try {
+    await navigator.clipboard.writeText(tsv);
+    setStatus('TSV copied to clipboard.', 'ok');
+    // Brief inline feedback for the in-table copy button (the data-area
+    // status banner is far from the table, easy to miss).
+    if (btn) {
+      btn.classList.add('copied');
+      setTimeout(() => btn.classList.remove('copied'), 900);
+    }
+  } catch (e) {
+    setStatus('Copy failed: ' + e.message, 'error');
+  }
+}
+
+document.getElementById('copy-btn').addEventListener('click', () => copyPivotAsTSV());
+const pivotCopyBtn = document.getElementById('pivot-copy-btn');
+pivotCopyBtn.addEventListener('click', () => copyPivotAsTSV(pivotCopyBtn));
+// Inline copy icon (clipboard glyph) — matches the SHF panel's monochrome
+// SVG approach so the button picks up theme color via currentColor.
+(function initCopyIcon() {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('width', '14'); svg.setAttribute('height', '14');
+  svg.setAttribute('viewBox', '0 0 14 14');
+  svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.2');
+  svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+  // Front sheet
+  const front = document.createElementNS(ns, 'rect');
+  front.setAttribute('x', '4'); front.setAttribute('y', '5');
+  front.setAttribute('width', '7'); front.setAttribute('height', '7');
+  front.setAttribute('rx', '1');
+  svg.appendChild(front);
+  // Back sheet hint
+  const back = document.createElementNS(ns, 'path');
+  back.setAttribute('d', 'M3 9V3a1 1 0 0 1 1-1h6');
+  svg.appendChild(back);
+  pivotCopyBtn.appendChild(svg);
+})();
 
 document.getElementById('sample-btn').addEventListener('click', () => {
   topsEl.value = sampleTops();
