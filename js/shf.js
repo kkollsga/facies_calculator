@@ -129,16 +129,86 @@ function shfFilteredPoints() {
   });
 }
 
-// Reservoir-style random sample: shuffle the first n via partial Fisher-Yates,
-// take prefix. Stable enough for one render but reshuffles on each refresh.
-function _randomSample(arr, n) {
+// Stratified-by-cell sample over the (Sw, HAFWL, √(k/φ)) space so the plot
+// shows the *full solution space*, not just the densest blob.
+//
+// Strategy:
+//   1. Bucket points into a 3D grid. Total cells ≈ n/2. The vertical (RQI)
+//      axis is capped at 3 strata so the Sw/HAFWL cells stay narrow enough
+//      to resolve features there — XY is sized as sqrt(n / (6)) (so
+//      bx · by · 3 ≈ n/2).
+//   2. Phase 1 — pick one random point from each occupied cell. Cell order is
+//      shuffled so when occupied cells > n we drop random cells (not the
+//      ones at the corner of axis-min).
+//   3. Phase 2 — fill the remaining budget by uniform random sample over the
+//      points NOT yet picked. Uniform sampling from the leftover pool is
+//      naturally density-weighted: denser cells contribute more leftovers.
+function _stratifiedSample(arr, n) {
   if (arr.length <= n) return arr.slice();
-  const a = arr.slice();
-  for (let i = 0; i < n; i++) {
-    const j = i + Math.floor(Math.random() * (a.length - i));
-    const tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+
+  const xVals = arr.map(p => p.sw);
+  const yVals = arr.map(p => p.hafwl);
+  const zVals = arr.map(p => Math.sqrt(p.perm / Math.max(1e-12, p.por)));
+  const xMin = Math.min.apply(null, xVals), xMax = Math.max.apply(null, xVals);
+  const yMin = Math.min.apply(null, yVals), yMax = Math.max.apply(null, yVals);
+  const zMin = Math.min.apply(null, zVals), zMax = Math.max.apply(null, zVals);
+  const binsXY = Math.max(2, Math.round(Math.sqrt(n / 6)));
+  const binsZ = Math.min(3, binsXY);
+  const xR = (xMax - xMin) || 1;
+  const yR = (yMax - yMin) || 1;
+  const zR = (zMax - zMin) || 1;
+  const cells = new Map();
+  for (let idx = 0; idx < arr.length; idx++) {
+    const i = Math.min(binsXY - 1, Math.floor((xVals[idx] - xMin) / xR * binsXY));
+    const j = Math.min(binsXY - 1, Math.floor((yVals[idx] - yMin) / yR * binsXY));
+    const k = Math.min(binsZ  - 1, Math.floor((zVals[idx] - zMin) / zR * binsZ));
+    const key = i + '|' + j + '|' + k;
+    let bucket = cells.get(key);
+    if (!bucket) { bucket = []; cells.set(key, bucket); }
+    bucket.push(arr[idx]);
   }
-  return a.slice(0, n);
+
+  const cellKeys = [...cells.keys()];
+  for (let i = cellKeys.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = cellKeys[i]; cellKeys[i] = cellKeys[j]; cellKeys[j] = tmp;
+  }
+  const out = [];
+  const leftover = [];
+  for (const key of cellKeys) {
+    const bucket = cells.get(key);
+    if (out.length < n) {
+      const r = Math.floor(Math.random() * bucket.length);
+      out.push(bucket[r]);
+      for (let i = 0; i < bucket.length; i++) if (i !== r) leftover.push(bucket[i]);
+    } else {
+      for (const p of bucket) leftover.push(p);
+    }
+  }
+
+  const need = n - out.length;
+  if (need > 0 && leftover.length > 0) {
+    const k = Math.min(need, leftover.length);
+    for (let i = 0; i < k; i++) {
+      const j = i + Math.floor(Math.random() * (leftover.length - i));
+      const tmp = leftover[i]; leftover[i] = leftover[j]; leftover[j] = tmp;
+    }
+    for (let i = 0; i < k; i++) out.push(leftover[i]);
+  }
+  return out;
+}
+
+// Linear-interpolation percentile (NumPy-default style). Input must be sorted
+// ascending. Used to clip color scales to p05/p95 so a handful of error /
+// bad-quality samples can't compress the rainbow ramp.
+function _percentile(sortedAsc, q) {
+  const m = sortedAsc.length;
+  if (m === 0) return 0;
+  if (m === 1) return sortedAsc[0];
+  const pos = q * (m - 1);
+  const lo = Math.floor(pos), hi = Math.ceil(pos);
+  if (lo === hi) return sortedAsc[lo];
+  return sortedAsc[lo] * (hi - pos) + sortedAsc[hi] * (pos - lo);
 }
 
 // Rainbow ramp: t ∈ [0,1] mapped to HSL hue from blue (240°) → red (0°).
@@ -169,7 +239,7 @@ function _refreshShfPanelImpl() {
   const pts = shfFilteredPoints();
   const maxInput = document.getElementById('shf-max');
   const maxPts = Math.max(10, parseInt(maxInput.value) || 100);
-  const sampled = _randomSample(pts, maxPts);
+  const sampled = _stratifiedSample(pts, maxPts);
 
   const meta = document.getElementById('shf-meta');
   meta.textContent = sampled.length + ' / ' + pts.length + ' samples'
@@ -195,6 +265,19 @@ function _colorMetric(p, mode) {
   return Math.sqrt(p.perm / p.por);
 }
 
+function _shfTooltip(p) {
+  const num = (v, d) => (v == null || !isFinite(v)) ? '—' : Number(v).toFixed(d);
+  const rqi = (p.por != null && p.perm != null && p.por > 0)
+    ? Math.sqrt(p.perm / p.por) : null;
+  return p.well
+    + '\nMD: ' + num(p.md, 3)
+    + '\nHAFWL: ' + num(p.hafwl, 2)
+    + '\nφ: ' + num(p.por, 4)
+    + '\nk: ' + num(p.perm, 3)
+    + '\nSw: ' + num(p.sw, 4)
+    + '\n√(k/φ): ' + num(rqi, 3);
+}
+
 function _colorMetricLabel(mode) {
   return mode === 'por' ? 'Porosity (φ)' : '√(k/φ)';
 }
@@ -202,9 +285,13 @@ function _colorMetricLabel(mode) {
 function _renderShfPlot(points) {
   const colorBy = document.getElementById('shf-color').value;
   const cvals = points.map(p => _colorMetric(p, colorBy));
-  const cMin = Math.min.apply(null, cvals);
-  const cMax = Math.max.apply(null, cvals);
-  const cRange = (cMax - cMin) || 1;
+  // Color scale clipped to p05–p95 of the metric so a handful of bad/error
+  // samples can't compress the rainbow into a thin band. Points beyond the
+  // bounds saturate at the ends of the ramp.
+  const sortedC = cvals.slice().sort((a, b) => a - b);
+  const cLo = _percentile(sortedC, 0.05);
+  const cHi = _percentile(sortedC, 0.95);
+  const cRange = (cHi - cLo) || 1;
 
   // X = Sw (clipped to [0, max(1, observed)]); Y = HAFWL (linear, low at bottom).
   const xs = points.map(p => p.sw);
@@ -256,24 +343,28 @@ function _renderShfPlot(points) {
   const yLab = svgEl('text', { x: 16, y: M.top + ih / 2, 'text-anchor': 'middle', transform: 'rotate(-90 16 ' + (M.top + ih / 2) + ')', 'font-size': '11', 'font-family': 'IBM Plex Sans, sans-serif', fill: '#3a3528', 'font-weight': '500' }, svg);
   yLab.textContent = 'HAFWL';
 
-  // Points
+  // Points. Each circle carries a native SVG <title> for hover-tooltip
+  // showing well + log values + RQI — relies on the browser tooltip so
+  // there's no overlay layer to maintain.
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
     const x = xScale(p.sw);
     const y = yScale(p.hafwl);
-    const t = (cvals[i] - cMin) / cRange;
+    const t = (cvals[i] - cLo) / cRange;
     const color = _rainbowColor(t);
-    svgEl('circle', {
+    const c = svgEl('circle', {
       cx: x, cy: y, r: 3.4,
       fill: color, 'fill-opacity': 0.78,
       stroke: color, 'stroke-opacity': 0.95, 'stroke-width': 0.6,
     }, svg);
+    const title = svgEl('title', null, c);
+    title.textContent = _shfTooltip(p);
   }
 
   // SE-equation overlay placeholder: a future session will draw the fit
   // curve here using shfState.equation (Brooks-Corey λ, J-function, etc).
 
-  _renderShfColorBar(_colorMetricLabel(colorBy), cMin, cMax);
+  _renderShfColorBar(_colorMetricLabel(colorBy), cLo, cHi);
 }
 
 function _renderShfColorBar(label, vMin, vMax) {
