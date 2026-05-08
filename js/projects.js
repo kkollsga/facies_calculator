@@ -130,6 +130,23 @@ const Projects = {
     p.faciesLabels = Object.fromEntries(state.faciesLabels);
     p.zoneRenames = Object.fromEntries(state.zoneRenames);
     p.fwlValues = Object.fromEntries(state.fwlValues);
+    // Pivot filter state — when enabled, the pivot drops rows for
+    // unselected wells/zones and hides facies columns for unselected
+    // codes. Sets serialise as arrays; prevDetected lets reconcile
+    // preserve user exclusions on reload.
+    p.pivotFilter = {
+      enabled: !!state.pivotFilterEnabled,
+      filters: {
+        wells:  [...state.pivotFilters.wells],
+        zones:  [...state.pivotFilters.zones],
+        facies: [...state.pivotFilters.facies],
+      },
+      prevDetected: {
+        wells:  (state.pivotFiltersPrevDetected.wells  || []).slice(),
+        zones:  (state.pivotFiltersPrevDetected.zones  || []).slice(),
+        facies: (state.pivotFiltersPrevDetected.facies || []).slice(),
+      },
+    };
     p.regressions = regState.list.map(_serializeRegression);
     p.regActiveId = regState.activeId;
     p.regNextId = regState.nextId;
@@ -244,6 +261,17 @@ const Projects = {
       const n = Number(v);
       if (Number.isFinite(n)) state.fwlValues.set(w, n);
     }
+    // Pivot filter state.
+    const pf = p.pivotFilter || {};
+    state.pivotFilterEnabled = !!pf.enabled;
+    state.pivotFilters.wells  = new Set((pf.filters && pf.filters.wells)  || []);
+    state.pivotFilters.zones  = new Set((pf.filters && pf.filters.zones)  || []);
+    state.pivotFilters.facies = new Set((pf.filters && pf.filters.facies) || []);
+    state.pivotFiltersPrevDetected = {
+      wells:  ((pf.prevDetected && pf.prevDetected.wells)  || []).slice(),
+      zones:  ((pf.prevDetected && pf.prevDetected.zones)  || []).slice(),
+      facies: ((pf.prevDetected && pf.prevDetected.facies) || []).slice(),
+    };
     regState.list = (p.regressions || []).map(_deserializeRegression);
     regState.activeId = (p.regActiveId != null) ? p.regActiveId : null;
     regState.nextId = p.regNextId || 1;

@@ -135,6 +135,25 @@
     <div class="table-scroll">
       <table id="pivot-table"></table>
     </div>
+
+    <button class="collapse-toggle" id="pivot-filter-btn" type="button" style="display:none;" aria-expanded="false" aria-controls="pivot-filters">
+      <span class="collapse-chev" aria-hidden="true"></span>
+      <span class="collapse-label">Show filters</span>
+    </button>
+    <div class="plot-filters pivot-filters" id="pivot-filters" style="display:none;">
+      <div class="plot-filter-block">
+        <div class="plot-filter-head">Wells</div>
+        <div class="plot-filter-chips" id="pivot-filter-wells"></div>
+      </div>
+      <div class="plot-filter-block">
+        <div class="plot-filter-head">Zones</div>
+        <div class="plot-filter-chips" id="pivot-filter-zones"></div>
+      </div>
+      <div class="plot-filter-block">
+        <div class="plot-filter-head">Facies</div>
+        <div class="plot-filter-chips" id="pivot-filter-facies"></div>
+      </div>
+    </div>
   </div>
 
   <button class="collapse-toggle" id="plot-toggle-btn" type="button" style="display:none;" aria-expanded="false" aria-controls="plot-section">

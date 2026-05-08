@@ -14,10 +14,17 @@ const state = {
   faciesLabels: new Map(),   // code -> label
   zoneRenames: new Map(),    // original zone name -> new name
   fwlValues: new Map(),      // well -> free-water level (TVDSS, same sign convention as input)
+  // Pivot table filters: when enabled, drop rows whose well/zone/facies
+  // isn't in the corresponding set before render. Disabled = no filter,
+  // even when sets have non-default selections.
+  pivotFilterEnabled: false,
+  pivotFilters: { wells: new Set(), zones: new Set(), facies: new Set() },
+  pivotFiltersPrevDetected: { wells: [], zones: [], facies: [] },
 };
 
 // Snapshot of the most recent successful calculation, used by render, plot, and exports.
-let lastResults = null;
+let lastResults = null;        // post-filter results (used by render + exports)
+let lastResultsRaw = null;     // pre-filter results — survives chip toggles so we can re-apply
 let lastFacies = null;
 let lastLabels = null;
 let lastHasPorosity = false;

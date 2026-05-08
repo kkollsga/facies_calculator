@@ -603,6 +603,13 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   font-family: 'IBM Plex Mono', monospace; font-size: 10.5px;
   color: var(--ink); min-width: 22px; text-align: right;
 }
+.pivot-filters {
+  margin-top: 12px;
+  /* Stretch full-width below the table; .plot-filters defaults to a
+   * sidebar column inside plot-body. */
+  max-height: none;
+  align-self: stretch;
+}
 .shf-line-range {
   display: flex; align-items: center; gap: 4px; min-width: 0;
 }

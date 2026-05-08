@@ -50,7 +50,10 @@ function currentGrouping() {
 }
 
 function rerenderIfReady() {
-  if (!lastResults) return;
+  if (!lastResultsRaw) return;
+  // Re-apply pivot filters from raw so chip clicks update the table
+  // without re-running the calculate / aggregate pipeline.
+  lastResults = applyPivotFilters(lastResultsRaw);
   render(lastResults, lastLabels, currentToggles(), lastHasPorosity, lastHasPermeability, currentGrouping());
   refreshPlotPanel();
   // Persist the pivot toggle state alongside the rerender — change
@@ -137,8 +140,18 @@ function autoRefresh() {
   const hasPor = por.length > 0;
   const hasPerm = hasPor && porosityRowsHavePerm(por);
 
+  // Pivot filter chips track the data on each refresh; reconcile keeps
+  // user exclusions across small edits. Raw + filtered are tracked
+  // separately — chip clicks call rerenderIfReady which re-applies
+  // applyPivotFilters from the raw set, no full pipeline re-run.
+  rebuildPivotFilterChips(results, () => {
+    rerenderIfReady();
+    Projects.saveDebounced();
+  });
+
   lastPorPoints = hasPor ? enrichPorPoints(por, zones, fac, renames) : [];
-  lastResults = results;
+  lastResultsRaw = results;
+  lastResults = applyPivotFilters(results);
   lastLabels = labels;
   lastHasPorosity = hasPor;
   lastHasPermeability = hasPerm;
@@ -193,6 +206,9 @@ function autoRefresh() {
   // of the way once they have a working pivot.
   document.getElementById('inputs-toggle-btn').style.display = '';
   _updateInputsToggleUI();
+  // Pivot filter toggle is only meaningful when there's a pivot.
+  document.getElementById('pivot-filter-btn').style.display = '';
+  _updatePivotFilterToggleUI();
 }
 
 function hideResultsAndPlot() {
@@ -211,6 +227,10 @@ function hideResultsAndPlot() {
   const shfBtn = document.getElementById('shf-toggle-btn');
   if (shfBtn) shfBtn.style.display = 'none';
   lastHasShf = false;
+  // Pivot filter toggle hides too — no pivot, nothing to filter.
+  const pivBtn = document.getElementById('pivot-filter-btn');
+  if (pivBtn) pivBtn.style.display = 'none';
+  document.getElementById('pivot-filters').style.display = 'none';
   // Reset inputs to expanded so the user can paste data straight away,
   // and hide the toggle (no data → nothing to collapse).
   const inputsArea = document.getElementById('data-inputs-area');
@@ -335,6 +355,23 @@ function _updateInputsToggleUI() {
 document.getElementById('inputs-toggle-btn').addEventListener('click', () => {
   document.getElementById('data-inputs-area').classList.toggle('collapsed');
   _updateInputsToggleUI();
+  Projects.saveDebounced();
+});
+
+function _updatePivotFilterToggleUI() {
+  const btn = document.getElementById('pivot-filter-btn');
+  const panel = document.getElementById('pivot-filters');
+  if (!btn || !panel) return;
+  const on = !!state.pivotFilterEnabled;
+  btn.setAttribute('aria-expanded', String(on));
+  const lbl = btn.querySelector('.collapse-label');
+  if (lbl) lbl.textContent = on ? 'Hide filters' : 'Show filters';
+  panel.style.display = on ? '' : 'none';
+}
+document.getElementById('pivot-filter-btn').addEventListener('click', () => {
+  state.pivotFilterEnabled = !state.pivotFilterEnabled;
+  _updatePivotFilterToggleUI();
+  rerenderIfReady();
   Projects.saveDebounced();
 });
 document.getElementById('pt-hist').addEventListener('change', refreshPlotPanel);

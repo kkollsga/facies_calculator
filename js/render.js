@@ -11,6 +11,99 @@
 // are ignored.
 const expandedZones = new Set();
 
+// ============================================================
+// Pivot filters: optional well / zone / facies filtering
+// ============================================================
+
+// Reconcile a filter Set against an old vs new detected category list.
+// Brand-new categories get auto-included; vanished categories get
+// dropped; existing categories keep their include / exclude state.
+// Mirrors the same pattern used by the plot and SHF panels.
+function _reconcilePivotFilter(set, prevDetected, newDetected) {
+  const newDet = new Set(newDetected);
+  const prevDet = new Set(prevDetected);
+  for (const v of [...set]) if (!newDet.has(v)) set.delete(v);
+  for (const v of newDetected) if (!prevDet.has(v)) set.add(v);
+}
+
+function _buildPivotFilterChips(containerId, items, set, onChange, labelFn) {
+  const c = document.getElementById(containerId);
+  if (!c) return;
+  c.innerHTML = '';
+  if (items.length === 0) {
+    const empty = document.createElement('span');
+    empty.style.cssText = 'font-size:11px;color:var(--ink-soft);font-style:italic;';
+    empty.textContent = 'no data';
+    c.appendChild(empty);
+    return;
+  }
+  for (const item of items) {
+    const chip = document.createElement('span');
+    chip.className = 'plot-chip' + (set.has(item) ? ' active' : '');
+    chip.textContent = labelFn ? labelFn(item) : String(item);
+    chip.dataset.value = String(item);
+    chip.addEventListener('click', () => {
+      if (set.has(item)) set.delete(item); else set.add(item);
+      chip.classList.toggle('active');
+      onChange();
+    });
+    c.appendChild(chip);
+  }
+}
+
+// Refresh the chip rows from the current results array. Reconciles
+// against prevDetected so chip exclusions survive small data edits.
+function rebuildPivotFilterChips(results, onChange) {
+  if (!Array.isArray(results)) return;
+  const wells = [];
+  const zones = [];
+  const wellSet = new Set();
+  const zoneSet = new Set();
+  for (const r of results) {
+    if (r.well && !wellSet.has(r.well)) { wellSet.add(r.well); wells.push(r.well); }
+    if (r.zone && !zoneSet.has(r.zone)) { zoneSet.add(r.zone); zones.push(r.zone); }
+  }
+  const facies = uniqueFacies(results);
+  _reconcilePivotFilter(state.pivotFilters.wells,  state.pivotFiltersPrevDetected.wells,  wells);
+  _reconcilePivotFilter(state.pivotFilters.zones,  state.pivotFiltersPrevDetected.zones,  zones);
+  _reconcilePivotFilter(state.pivotFilters.facies, state.pivotFiltersPrevDetected.facies, facies);
+  state.pivotFiltersPrevDetected = { wells, zones, facies };
+  _buildPivotFilterChips('pivot-filter-wells',  wells,  state.pivotFilters.wells,  onChange);
+  _buildPivotFilterChips('pivot-filter-zones',  zones,  state.pivotFilters.zones,  onChange);
+  _buildPivotFilterChips('pivot-filter-facies', facies, state.pivotFilters.facies, onChange,
+    f => {
+      const lab = state.faciesLabels && state.faciesLabels.get(f);
+      return lab ? (lab + ' (' + f + ')') : ('F' + f);
+    });
+}
+
+// Apply pivot filters to a results array (per-zone records). Drops rows
+// for unselected wells / zones; for facies, prunes faciesZ/N/Frac maps
+// to selected codes and re-derives coveredZ. When the master toggle is
+// off, returns results untouched (filters set state but don't apply).
+function applyPivotFilters(results) {
+  if (!state.pivotFilterEnabled) return results;
+  const fw = state.pivotFilters.wells;
+  const fz = state.pivotFilters.zones;
+  const ff = state.pivotFilters.facies;
+  const out = [];
+  for (const r of results) {
+    if (r.well && !fw.has(r.well)) continue;
+    if (r.zone && !fz.has(r.zone)) continue;
+    const faciesZ = new Map();
+    const faciesN = new Map();
+    let coveredZ = 0;
+    r.faciesZ.forEach((v, k) => {
+      if (ff.has(k)) { faciesZ.set(k, v); coveredZ += v; }
+    });
+    if (r.faciesN) r.faciesN.forEach((v, k) => { if (ff.has(k)) faciesN.set(k, v); });
+    const faciesFrac = new Map();
+    if (r.grossZ > 0) faciesZ.forEach((v, k) => faciesFrac.set(k, v / r.grossZ));
+    out.push(Object.assign({}, r, { faciesZ, faciesN, faciesFrac, coveredZ }));
+  }
+  return out;
+}
+
 function fmtNum(v, dp = 2) {
   if (!isFinite(v)) return '';
   return v.toFixed(dp);
@@ -192,14 +285,22 @@ function render(results, labels, toggles, hasPorosity, hasPermeability, grouping
 
   const tbody = document.createElement('tbody');
 
-  function emitDataRow(r, isFirstInGroup, isAggregate, role) {
+  function emitDataRow(r, firsts, isAggregate, role) {
     // role (optional, hierarchical mode only):
     //   { kind: 'zone-parent', key, hasChildren, expanded }   — collapsible parent row
     //   { kind: 'facies-child', parentKey, expanded }         — child row, hidden if !expanded
+    //
+    // firsts.{well, zone} mark whether this row starts a new well or
+    // zone group. Each grouped column prints its value only on the
+    // first row of its group; subsequent rows in the same group leave
+    // that cell blank (spreadsheet convention, matches state-1's
+    // visual grouping). Caller tracks prevWell/prevZone in flat
+    // aggregations; state-1 / hierarchical modes flush per group.
     role = role || {};
+    firsts = firsts || {};
     const row = document.createElement('tr');
     if (isAggregate) row.classList.add('agg-row');
-    if (isFirstInGroup && tbody.children.length > 0) row.classList.add('group-divider');
+    if (firsts.well && tbody.children.length > 0) row.classList.add('group-divider');
     if (role.kind === 'zone-parent') {
       row.classList.add('zone-parent-row');
       if (role.hasChildren) row.classList.add('has-children');
@@ -214,12 +315,7 @@ function render(results, labels, toggles, hasPorosity, hasPermeability, grouping
     if (showWellCol) {
       const wellTd = document.createElement('td');
       wellTd.className = 'well-c';
-      // Print the well only on the first row of each well group; rows
-      // that share the well with the previous row leave the cell blank.
-      // The caller is responsible for setting isFirstInGroup to mark a
-      // well boundary — flat aggregations track previous well, state-1
-      // and hierarchical modes flush per well group.
-      const showWell = role.kind !== 'facies-child' && isFirstInGroup;
+      const showWell = role.kind !== 'facies-child' && firsts.well;
       if (showWell) wellTd.textContent = r.well;
       row.appendChild(wellTd);
     }
@@ -234,7 +330,7 @@ function render(results, labels, toggles, hasPorosity, hasPermeability, grouping
         caret.textContent = '▸';
         zoneTd.appendChild(caret);
         zoneTd.appendChild(document.createTextNode(r.zone));
-      } else {
+      } else if (firsts.zone !== false) {
         zoneTd.textContent = r.zone;
       }
       row.appendChild(zoneTd);
@@ -418,7 +514,9 @@ function render(results, labels, toggles, hasPorosity, hasPermeability, grouping
     function flushGroup() {
       if (groupBuffer.length === 0) return;
       const w = groupBuffer[0].well;
-      for (let i = 0; i < groupBuffer.length; i++) emitDataRow(groupBuffer[i], i === 0, false);
+      for (let i = 0; i < groupBuffer.length; i++) {
+        emitDataRow(groupBuffer[i], { well: i === 0, zone: true }, false);
+      }
       emitBaseRow(groupBuffer[groupBuffer.length - 1]);
       emitWellTotalsRow(w, groupBuffer);
       groupBuffer = [];
@@ -448,11 +546,11 @@ function render(results, labels, toggles, hasPorosity, hasPermeability, grouping
         const key = z.well + '\x00' + z.zone;
         const kids = childrenByKey.get(key) || [];
         const expanded = expandedZones.has(key);
-        emitDataRow(z, i === 0, false, {
+        emitDataRow(z, { well: i === 0, zone: true }, false, {
           kind: 'zone-parent', key, hasChildren: kids.length > 0, expanded,
         });
         for (const c of kids) {
-          emitDataRow(c, false, false, {
+          emitDataRow(c, { well: false, zone: false }, false, {
             kind: 'facies-child', parentKey: key, expanded,
           });
         }
@@ -472,11 +570,13 @@ function render(results, labels, toggles, hasPorosity, hasPermeability, grouping
     // aggregated summary. Track the previous row's well so the well
     // column only labels the first row of each well group (e.g. when
     // grouping by Well + Facies, multiple facies rows share a well).
-    let prevWell = null;
+    let prevWell = null, prevZone = null;
     for (const r of rowsView) {
-      const isFirstWellRow = r.well !== prevWell;
-      emitDataRow(r, isFirstWellRow, true);
+      const wellChanged = r.well !== prevWell;
+      const zoneChanged = wellChanged || r.zone !== prevZone;
+      emitDataRow(r, { well: wellChanged, zone: zoneChanged }, true);
       prevWell = r.well;
+      prevZone = r.zone;
     }
   }
 
