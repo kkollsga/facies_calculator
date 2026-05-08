@@ -150,6 +150,7 @@ const Projects = {
         facies: (_plotPrevDetected.facies || []).slice(),
       },
     };
+    const scaleBtn = document.getElementById('shf-scale-btn');
     p.shfPanel = {
       visible: !!shfState.visible,
       filters: {
@@ -162,6 +163,7 @@ const Projects = {
         zones:  (_shfPrevDetected.zones  || []).slice(),
         facies: (_shfPrevDetected.facies || []).slice(),
       },
+      colorScale: scaleBtn ? scaleBtn.dataset.scale : 'lin',
       fit: shfState.fit ? {
         swirr:   shfState.fit.swirr,
         he:      shfState.fit.he,
@@ -222,6 +224,12 @@ const Projects = {
       facies: ((sp.prevDetected && sp.prevDetected.facies) || []).slice(),
     };
     _shfCategoryFp = null;
+    const scaleBtn = document.getElementById('shf-scale-btn');
+    if (scaleBtn) {
+      const persistedScale = sp.colorScale === 'log' ? 'log' : 'lin';
+      scaleBtn.dataset.scale = persistedScale;
+      scaleBtn.textContent = persistedScale === 'log' ? 'Log' : 'Linear';
+    }
     if (sp.fit && typeof sp.fit === 'object') {
       const swirr = Number(sp.fit.swirr);
       const he    = Number(sp.fit.he);

@@ -214,8 +214,13 @@ function render(results, labels, toggles, hasPorosity, hasPermeability, grouping
     if (showWellCol) {
       const wellTd = document.createElement('td');
       wellTd.className = 'well-c';
-      // Children inherit the well visually from their parent — leave the cell empty.
-      if (isFirstInGroup && role.kind !== 'facies-child') wellTd.textContent = r.well;
+      // Children inherit the well visually from their parent — leave empty.
+      // In hierarchical/state-1 mode the well only labels the first row of
+      // each well group (group-divider pattern). In flat aggregations every
+      // row stands alone, so always print the well; otherwise the column
+      // appears blank (this was the well+facies grouping bug).
+      const showWell = role.kind !== 'facies-child' && (isFirstInGroup || isAggregate);
+      if (showWell) wellTd.textContent = r.well;
       row.appendChild(wellTd);
     }
     if (showZoneCol) {

@@ -264,6 +264,14 @@ document.getElementById('shf-toggle-btn').addEventListener('click', () => {
 });
 document.getElementById('shf-color').addEventListener('change', refreshShfPanel);
 document.getElementById('shf-max').addEventListener('input', refreshShfPanel);
+document.getElementById('shf-scale-btn').addEventListener('click', () => {
+  const btn = document.getElementById('shf-scale-btn');
+  const next = btn.dataset.scale === 'log' ? 'lin' : 'log';
+  btn.dataset.scale = next;
+  btn.textContent = next === 'log' ? 'Log' : 'Linear';
+  refreshShfPanel();
+  Projects.saveDebounced();
+});
 document.getElementById('shf-swirr').addEventListener('input', shfFitInputChanged);
 document.getElementById('shf-he').addEventListener('input', shfFitInputChanged);
 document.getElementById('shf-lambda').addEventListener('input', shfFitInputChanged);

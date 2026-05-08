@@ -533,14 +533,24 @@ function _colorMetricLabel(mode) {
 
 function _renderShfPlot(points) {
   const colorBy = document.getElementById('shf-color').value;
-  const cvals = points.map(p => _colorMetric(p, colorBy));
-  // Color scale clipped to p05–p95 of the metric so a handful of bad/error
-  // samples can't compress the rainbow into a thin band. Points beyond the
-  // bounds saturate at the ends of the ramp.
+  const scaleBtn = document.getElementById('shf-scale-btn');
+  const isLog = scaleBtn && scaleBtn.dataset.scale === 'log';
+  const cvalsRaw = points.map(p => _colorMetric(p, colorBy));
+  // Log mode only meaningful when every value is strictly positive. Both
+  // metrics (RQI and porosity) are >0 in practice, but guard anyway: if any
+  // sample is non-positive, fall back to linear so we don't NaN the ramp.
+  const useLog = isLog && cvalsRaw.every(v => Number.isFinite(v) && v > 0);
+  const cvals = useLog ? cvalsRaw.map(Math.log) : cvalsRaw;
+  // Color scale clipped to p05–p95 of the (possibly log-transformed) metric so
+  // a handful of bad/error samples can't compress the rainbow into a thin band.
   const sortedC = cvals.slice().sort((a, b) => a - b);
   const cLo = _percentile(sortedC, 0.05);
   const cHi = _percentile(sortedC, 0.95);
   const cRange = (cHi - cLo) || 1;
+  // Legend bounds are reported in the original (untransformed) units so the
+  // numbers next to the colorbar always read like the metric, not log of it.
+  const legendLo = useLog ? Math.exp(cLo) : cLo;
+  const legendHi = useLog ? Math.exp(cHi) : cHi;
 
   // X = Sw (clipped to [0, max(1, observed)]); Y = HAFWL (linear, low at bottom).
   const xs = points.map(p => p.sw);
@@ -646,7 +656,7 @@ function _renderShfPlot(points) {
     }, svg);
   }
 
-  _renderShfColorBar(_colorMetricLabel(colorBy), cLo, cHi);
+  _renderShfColorBar(_colorMetricLabel(colorBy) + (useLog ? '  (log)' : ''), legendLo, legendHi);
 }
 
 function _renderShfColorBar(label, vMin, vMax) {
