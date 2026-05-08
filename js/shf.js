@@ -386,19 +386,13 @@ function _shfMlFitLinear(points, startParams, method) {
   return { params, sse: best, r2: quality.r2, n: quality.n };
 }
 
-// Pure coordinate descent + golden-section search on weighted SSE.
-// Doesn't lean on log-linear initialisation — useful when the data
-// doesn't fit the linearisation assumptions well (e.g. Sw values that
-// flatten near the asymptote, or sparse high-RQI tails). Slower than
-// the linearised path; runs more passes and a tighter line-search
-// tolerance to compensate for starting from defaults.
-function _shfMlFitCoord(points, startParams, method) {
-  if (!points || points.length < 5) return null;
-  const params = Object.assign({}, startParams);
-  const free = method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
+// Coordinate-descent body factored out so the linearised refinement and
+// pure coord-descent can share it with their own iteration budgets.
+// Returns the final SSE; mutates `params` in place.
+function _shfCoordRefine(points, params, method, free, maxPasses, goldTol, breakRel) {
   let best = _shfWeightedSse(points, params, method);
-  for (let pass = 0; pass < 16; pass++) {
-    let improved = false;
+  for (let pass = 0; pass < maxPasses; pass++) {
+    const passStart = best;
     for (const k of free) {
       const range = SHF_PARAM_RANGES[k];
       const probe = (v) => {
@@ -407,17 +401,59 @@ function _shfMlFitCoord(points, startParams, method) {
         params[k] = old;
         return s;
       };
-      const newVal = _goldenSectionMin(probe, range.min, range.max, (range.max - range.min) * 1e-7);
+      const newVal = _goldenSectionMin(probe, range.min, range.max, (range.max - range.min) * goldTol);
       const oldVal = params[k];
       params[k] = newVal;
       const s = _shfWeightedSse(points, params, method);
-      if (s < best - 1e-12) { best = s; improved = true; }
-      else { params[k] = oldVal; }
+      if (s < best) best = s;
+      else params[k] = oldVal;
     }
-    if (!improved) break;
+    // Break only when a full pass yielded < breakRel relative improvement,
+    // not the first pass that didn't improve. Prevents premature exit when
+    // coupled parameters can still claw out small gains on subsequent
+    // passes (which is what was making repeated ML-fit clicks keep
+    // improving the fit).
+    if (passStart > 0 && (passStart - best) < passStart * breakRel) break;
   }
-  const quality = _shfRSquared(points, params, method);
-  return { params, sse: best, r2: quality.r2, n: quality.n };
+  return best;
+}
+
+// Pure coordinate descent + golden-section search with multistart.
+// Coord descent is local, so it can stall in a basin that's not the
+// global optimum. We run from N random initialisations + the user's
+// current params, refine each, and keep the best. Deterministic
+// linearised init is a non-starter here (this algo's whole point is
+// to skip the linearisation).
+function _shfMlFitCoord(points, startParams, method) {
+  if (!points || points.length < 5) return null;
+  const free = method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
+  function refineFrom(seed) {
+    const p = Object.assign({}, seed);
+    for (const k of free) {
+      const r = SHF_PARAM_RANGES[k];
+      p[k] = Math.max(r.min, Math.min(r.max, p[k]));
+    }
+    const sse = _shfCoordRefine(points, p, method, free, 80, 1e-8, 1e-9);
+    return { params: p, sse };
+  }
+  function randomSeed() {
+    const p = Object.assign({}, startParams);
+    for (const k of free) {
+      const r = SHF_PARAM_RANGES[k];
+      p[k] = r.min + Math.random() * (r.max - r.min);
+    }
+    return p;
+  }
+  // First candidate is the user's current params (warm-start). Five
+  // random restarts on top so we get a fair shot at the global optimum
+  // without explosive cost — each restart is ~80 passes × 4 params ×
+  // golden-section ≈ a few thousand SSE evaluations, sub-100ms total.
+  const candidates = [refineFrom(startParams)];
+  for (let i = 0; i < 5; i++) candidates.push(refineFrom(randomSeed()));
+  let best = candidates[0];
+  for (const c of candidates) if (c.sse < best.sse) best = c;
+  const quality = _shfRSquared(points, best.params, method);
+  return { params: best.params, sse: best.sse, r2: quality.r2, n: quality.n };
 }
 
 // Adaptive Metropolis-Hastings MCMC, mirroring the leverett-j project's
