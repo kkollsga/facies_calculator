@@ -966,12 +966,22 @@ async function shfFnMlFit(id) {
     fitBtn.disabled = true;
     if (isMcmc) fitBtn.textContent = 'Fitting…';
   }
-  // Snapshot starting params so we can roll back if the result returns
-  // any NaN — protects later renders / fits from a corrupted chain.
+  // Snapshot the user's current params so we can roll back if the run
+  // returns NaN — protects later renders / fits from a corrupted chain.
   const startSnap = Object.assign({}, fn.params);
+  // Randomise the free coefficients before every fit so repeated
+  // clicks explore different basins. Constants stay put (they're
+  // physical knowns). For MCMC the adaptive warmup happens after this
+  // randomisation — random init, then walk.
+  const startParams = Object.assign({}, fn.params);
+  const freeKeys = fn.method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
+  for (const k of freeKeys) {
+    const r = SHF_PARAM_RANGES[k];
+    startParams[k] = r.min + Math.random() * (r.max - r.min);
+  }
   let result = null;
   try {
-    result = await _shfMlFit(pts, fn.params, fn.method);
+    result = await _shfMlFit(pts, startParams, fn.method);
   } catch (e) {
     setStatus('ML fit failed: ' + e.message, 'error');
     fn.params = startSnap;
