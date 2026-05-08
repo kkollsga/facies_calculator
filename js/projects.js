@@ -191,6 +191,8 @@ const Projects = {
       fitAlgo: (shfState.fitAlgo === 'coord' || shfState.fitAlgo === 'mcmc')
         ? shfState.fitAlgo : 'linear',
       randomizeFit: shfState.randomizeFit !== false,
+      lineRangeLo: Number.isFinite(shfState.lineRangeLo) ? shfState.lineRangeLo : 1,
+      lineRangeHi: Number.isFinite(shfState.lineRangeHi) ? shfState.lineRangeHi : 40,
       // Max HAFWL: empty means auto (shallowest data point); otherwise
       // a positive number override.
       maxHafwl: (() => {
@@ -320,6 +322,12 @@ const Projects = {
     shfState.fitAlgo = (sp.fitAlgo === 'coord' || sp.fitAlgo === 'mcmc')
       ? sp.fitAlgo : 'linear';
     shfState.randomizeFit = sp.randomizeFit !== false;
+    {
+      const lo = Number(sp.lineRangeLo);
+      const hi = Number(sp.lineRangeHi);
+      shfState.lineRangeLo = (Number.isFinite(lo) && lo > 0) ? lo : 1;
+      shfState.lineRangeHi = (Number.isFinite(hi) && hi > 0) ? hi : 40;
+    }
     shfState.activeFunctionId = (sp.activeFunctionId != null) ? sp.activeFunctionId : null;
     shfState.nextFunctionId = parseInt(sp.nextFunctionId) || 1;
     shfState.functions = (Array.isArray(sp.functions) ? sp.functions : []).map(o => ({
@@ -348,6 +356,10 @@ const Projects = {
       const v = Number(sp.maxHafwl);
       maxHafwlEl.value = (Number.isFinite(v) && v > 0) ? String(v) : '';
     }
+    const lineMinEl = document.getElementById('shf-line-min');
+    const lineMaxEl = document.getElementById('shf-line-max');
+    if (lineMinEl) lineMinEl.value = String(shfState.lineRangeLo);
+    if (lineMaxEl) lineMaxEl.value = String(shfState.lineRangeHi);
   },
 
   // Debounced persist: pulls UI state and writes to localStorage.

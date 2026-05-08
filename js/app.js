@@ -309,6 +309,16 @@ document.getElementById('shf-max-hafwl').addEventListener('input', () => {
   refreshShfPanel();
   Projects.saveDebounced();
 });
+function _wireShfLineRange(inputId, key) {
+  document.getElementById(inputId).addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    shfState[key] = (Number.isFinite(v) && v > 0) ? v : null;
+    refreshShfPanel();
+    Projects.saveDebounced();
+  });
+}
+_wireShfLineRange('shf-line-min', 'lineRangeLo');
+_wireShfLineRange('shf-line-max', 'lineRangeHi');
 document.getElementById('shf-lines').addEventListener('input', (e) => shfFnSetLineCount(e.target.value));
 document.getElementById('shf-fn-add-btn').addEventListener('click', shfFnAdd);
 

@@ -56,6 +56,12 @@ const shfState = {
   // to the algorithm. ON (default) means each click explores a fresh
   // basin; OFF warm-starts from the current parameter values.
   randomizeFit: true,
+  // Fixed √(k/φ) range that line representatives are picked within.
+  // Decouples line positions from the visible color-band p05/p95, so
+  // lines stay at consistent rock-quality values across filter changes.
+  // Empty / null = fall back to data extremes.
+  lineRangeLo: 1,
+  lineRangeHi: 40,
 };
 
 // ============================================================
@@ -1891,11 +1897,17 @@ function _renderShfPlot(points) {
     if (!fn.visible) continue;
     const fnPts = _shfFnPointsForFit(fn);
     if (fnPts.length === 0) continue;
-    // Constrain to the visible color band (legendLo..legendHi in
-    // original units), so every chosen line lands on a distinct rainbow
-    // color and lines that would have saturated at the ends aren't
-    // counted in the line total.
-    const refs = _shfPickReferencePoints(fnPts, colorBy, shfState.lineCount, legendLo, legendHi);
+    // Sample lines in a *fixed* √(k/φ) range so the line positions stay
+    // stable across filter / color changes. Default range is 1..40
+    // (covers most reservoir-quality rocks); overrides via the line-
+    // range inputs in the panel sidebar. The line picker still snaps
+    // each target to the nearest real (k, φ) pair in fnPts.
+    const lLo = Number(shfState.lineRangeLo);
+    const lHi = Number(shfState.lineRangeHi);
+    const refs = _shfPickReferencePoints(
+      fnPts, 'rqi', shfState.lineCount,
+      Number.isFinite(lLo) && lLo > 0 ? lLo : null,
+      Number.isFinite(lHi) && lHi > 0 ? lHi : null);
     for (const ref of refs) {
       const cv = _colorMetric(ref, colorBy);
       const t  = colorTFromValue(cv);
@@ -1963,19 +1975,20 @@ function _renderShfPlot(points) {
   _renderShfColorBar(_colorMetricLabel(colorBy) + '  (log)', legendLo, legendHi, colorBarTicks);
 }
 
-// Pick `n` reference points equally log-spaced in the color metric,
-// constrained to a [lo, hi] range (the panel's visible color band so
-// every line ends up at a distinct rainbow color, not saturated at an
-// end). Targets are snapped to the nearest *unique* real point — so
-// dense data with repeats can't collapse multiple targets onto the
-// same row of points (which previously made N=10 look like 8 lines).
+// Pick `n` reference points equally log-spaced in `metric` over the
+// [lo, hi] range. Targets are snapped to the nearest *unique* real
+// point so dense data with repeats can't collapse multiple targets
+// onto the same row. Points outside the range are still allowed as
+// snap candidates (so a tighter range than the data extent doesn't
+// silently produce zero lines), but only when no in-range point is
+// available for a given target.
 //
-// If lo/hi aren't supplied we fall back to the data extremes.
-function _shfPickReferencePoints(points, colorBy, n, lo, hi) {
+// Falls back to data extremes when lo/hi aren't supplied.
+function _shfPickReferencePoints(points, metric, n, lo, hi) {
   if (points.length === 0 || n <= 0) return [];
   const all = [];
   for (const p of points) {
-    const v = _colorMetric(p, colorBy);
+    const v = _colorMetric(p, metric);
     if (Number.isFinite(v) && v > 0) all.push({ p, v });
   }
   if (all.length === 0) return [];
@@ -1987,15 +2000,9 @@ function _shfPickReferencePoints(points, colorBy, n, lo, hi) {
     let maxV = -Infinity; for (const e of all) if (e.v > maxV) maxV = e.v;
     hi = maxV;
   }
-  // Restrict to points whose color metric falls inside the visible
-  // color band. Lines outside it are saturated colors that visually
-  // collapse onto the band's extremes, so they don't count.
-  const valid = all.filter(e => e.v >= lo && e.v <= hi);
-  if (valid.length === 0) return [];
-  // Degenerate range — fall back to a single representative.
   if (!(hi > lo)) {
-    const med = valid[Math.floor(valid.length / 2)].p;
-    return Array(Math.min(n, valid.length)).fill(med);
+    const med = all[Math.floor(all.length / 2)].p;
+    return Array(Math.min(n, all.length)).fill(med);
   }
   const lnLo = Math.log(lo);
   const lnHi = Math.log(hi);
@@ -2005,14 +2012,14 @@ function _shfPickReferencePoints(points, colorBy, n, lo, hi) {
     const q = (n === 1) ? 1 : i / (n - 1);
     const target = Math.exp(lnLo + q * (lnHi - lnLo));
     let bestIdx = -1, bestD = Infinity;
-    for (let j = 0; j < valid.length; j++) {
+    for (let j = 0; j < all.length; j++) {
       if (used.has(j)) continue;
-      const d = Math.abs(valid[j].v - target);
+      const d = Math.abs(all[j].v - target);
       if (d < bestD) { bestD = d; bestIdx = j; }
     }
-    if (bestIdx < 0) break;     // out of unique candidates
+    if (bestIdx < 0) break;
     used.add(bestIdx);
-    out.push(valid[bestIdx].p);
+    out.push(all[bestIdx].p);
   }
   return out;
 }

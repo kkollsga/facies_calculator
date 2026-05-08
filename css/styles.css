@@ -603,6 +603,11 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   font-family: 'IBM Plex Mono', monospace; font-size: 10.5px;
   color: var(--ink); min-width: 22px; text-align: right;
 }
+.shf-line-range {
+  display: flex; align-items: center; gap: 4px; min-width: 0;
+}
+.shf-line-range .plot-num { min-width: 0; flex: 1 1 0; padding-left: 4px; padding-right: 4px; }
+.shf-line-range-sep { color: var(--ink-soft); font-size: 11px; }
 .shf-fn-rand-toggle {
   font-family: 'IBM Plex Mono', monospace; font-size: 10px;
   text-transform: uppercase; letter-spacing: 0.06em;
