@@ -53,6 +53,10 @@ function rerenderIfReady() {
   if (!lastResults) return;
   render(lastResults, lastLabels, currentToggles(), lastHasPorosity, lastHasPermeability, currentGrouping());
   refreshPlotPanel();
+  // Persist the pivot toggle state alongside the rerender — change
+  // events on the seven toggles all funnel through here, so this is
+  // the natural pinch point.
+  Projects.saveDebounced();
 }
 
 togThk.addEventListener('change', rerenderIfReady);

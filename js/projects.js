@@ -133,6 +133,22 @@ const Projects = {
     p.regressions = regState.list.map(_serializeRegression);
     p.regActiveId = regState.activeId;
     p.regNextId = regState.nextId;
+    // Pivot table toggles. porosity/permeabilityTouched track whether the
+    // user has explicitly flipped those toggles, so the auto-on-when-data-
+    // returns logic in autoRefresh respects the user's last choice.
+    const togPorEl  = document.getElementById('t-porosity');
+    const togPermEl = document.getElementById('t-perm');
+    p.pivotPanel = {
+      byWell:        document.getElementById('g-well').checked,
+      byZone:        document.getElementById('g-zone').checked,
+      byFacies:      document.getElementById('g-facies').checked,
+      thicknesses:   document.getElementById('t-thickness').checked,
+      fractions:     document.getElementById('t-fraction').checked,
+      porosity:      togPorEl  ? togPorEl.checked  : true,
+      permeability:  togPermEl ? togPermEl.checked : true,
+      porosityTouched:     !!(togPorEl  && togPorEl.dataset.userTouched),
+      permeabilityTouched: !!(togPermEl && togPermEl.dataset.userTouched),
+    };
     // Cross-plot panel state: visibility + filter chip selections + the
     // last-detected categories so reconcile (in initPlotPanel) preserves
     // user exclusions across page refreshes.
@@ -216,6 +232,31 @@ const Projects = {
     regState.list = (p.regressions || []).map(_deserializeRegression);
     regState.activeId = (p.regActiveId != null) ? p.regActiveId : null;
     regState.nextId = p.regNextId || 1;
+
+    // Pivot panel toggles. Missing fields fall back to the same defaults
+    // _afterProjectSwitch used to set explicitly.
+    const piv = p.pivotPanel || {};
+    function applyToggle(id, key, def) {
+      const el = document.getElementById(id); if (!el) return;
+      el.checked = (piv[key] !== undefined) ? !!piv[key] : def;
+    }
+    applyToggle('g-well',      'byWell',       true);
+    applyToggle('g-zone',      'byZone',       true);
+    applyToggle('g-facies',    'byFacies',     false);
+    applyToggle('t-thickness', 'thicknesses',  true);
+    applyToggle('t-fraction',  'fractions',    false);
+    applyToggle('t-porosity',  'porosity',     true);
+    applyToggle('t-perm',      'permeability', true);
+    const togPorEl  = document.getElementById('t-porosity');
+    const togPermEl = document.getElementById('t-perm');
+    if (togPorEl) {
+      if (piv.porosityTouched) togPorEl.dataset.userTouched = '1';
+      else delete togPorEl.dataset.userTouched;
+    }
+    if (togPermEl) {
+      if (piv.permeabilityTouched) togPermEl.dataset.userTouched = '1';
+      else delete togPermEl.dataset.userTouched;
+    }
 
     // Cross-plot panel state. Filter chips are restored as Sets; prevDetected
     // tracks the categories present last time so initPlotPanel's reconcile
@@ -344,6 +385,12 @@ const Projects = {
       regressions: [],
       regActiveId: null,
       regNextId: 1,
+      pivotPanel: {
+        byWell: true, byZone: true, byFacies: false,
+        thicknesses: true, fractions: false,
+        porosity: true, permeability: true,
+        porosityTouched: false, permeabilityTouched: false,
+      },
     };
   },
   _newId() {
@@ -527,15 +574,9 @@ const ProjectBar = {
     resetPlotCategoryCache();
     resetShfCategoryCache();
 
-    document.getElementById('t-thickness').checked = true;
-    document.getElementById('t-fraction').checked = false;
-    const togPor = document.getElementById('t-porosity');
-    togPor.checked = true; togPor.disabled = true; delete togPor.dataset.userTouched;
-    const togPerm = document.getElementById('t-perm');
-    togPerm.checked = true; togPerm.disabled = true; delete togPerm.dataset.userTouched;
-    document.getElementById('g-well').checked = true;
-    document.getElementById('g-zone').checked = true;
-    document.getElementById('g-facies').checked = false;
+    // Pivot toggles are owned by Projects.applyToUI now (it ran before
+    // _afterProjectSwitch). The disabled state for porosity/perm gets
+    // reapplied by autoRefresh from the new project's data.
 
     clearStatus();
     // autoRefresh handles the rest: detect codes/zones, rebuild label/zone
