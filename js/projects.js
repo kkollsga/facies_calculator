@@ -133,6 +133,41 @@ const Projects = {
     p.regressions = regState.list.map(_serializeRegression);
     p.regActiveId = regState.activeId;
     p.regNextId = regState.nextId;
+    // Cross-plot panel state: visibility + filter chip selections + the
+    // last-detected categories so reconcile (in initPlotPanel) preserves
+    // user exclusions across page refreshes.
+    p.plotPanel = {
+      visible: !!plotState.visible,
+      type: plotState.type || 'hist',
+      filters: {
+        wells:  [...plotState.filters.wells],
+        zones:  [...plotState.filters.zones],
+        facies: [...plotState.filters.facies],
+      },
+      prevDetected: {
+        wells:  (_plotPrevDetected.wells  || []).slice(),
+        zones:  (_plotPrevDetected.zones  || []).slice(),
+        facies: (_plotPrevDetected.facies || []).slice(),
+      },
+    };
+    p.shfPanel = {
+      visible: !!shfState.visible,
+      filters: {
+        wells:  [...shfState.filters.wells],
+        zones:  [...shfState.filters.zones],
+        facies: [...shfState.filters.facies],
+      },
+      prevDetected: {
+        wells:  (_shfPrevDetected.wells  || []).slice(),
+        zones:  (_shfPrevDetected.zones  || []).slice(),
+        facies: (_shfPrevDetected.facies || []).slice(),
+      },
+      fit: shfState.fit ? {
+        swirr:   shfState.fit.swirr,
+        he:      shfState.fit.he,
+        lambda:  shfState.fit.lambda,
+      } : null,
+    };
   },
 
   // Push the active project's data into the UI/state. Caller is responsible
@@ -157,6 +192,45 @@ const Projects = {
     regState.list = (p.regressions || []).map(_deserializeRegression);
     regState.activeId = (p.regActiveId != null) ? p.regActiveId : null;
     regState.nextId = p.regNextId || 1;
+
+    // Cross-plot panel state. Filter chips are restored as Sets; prevDetected
+    // tracks the categories present last time so initPlotPanel's reconcile
+    // can preserve exclusions across reloads.
+    const pp = p.plotPanel || {};
+    plotState.visible = !!pp.visible;
+    plotState.type = pp.type === 'cross' ? 'cross' : 'hist';
+    plotState.filters.wells  = new Set((pp.filters && pp.filters.wells)  || []);
+    plotState.filters.zones  = new Set((pp.filters && pp.filters.zones)  || []);
+    plotState.filters.facies = new Set((pp.filters && pp.filters.facies) || []);
+    _plotPrevDetected = {
+      wells:  ((pp.prevDetected && pp.prevDetected.wells)  || []).slice(),
+      zones:  ((pp.prevDetected && pp.prevDetected.zones)  || []).slice(),
+      facies: ((pp.prevDetected && pp.prevDetected.facies) || []).slice(),
+    };
+    // Force the next initPlotPanel to actually run reconcile against the
+    // restored prevDetected (otherwise smart-skip would skip on session 1).
+    _plotCategoryFp = null;
+
+    const sp = p.shfPanel || {};
+    shfState.visible = !!sp.visible;
+    shfState.filters.wells  = new Set((sp.filters && sp.filters.wells)  || []);
+    shfState.filters.zones  = new Set((sp.filters && sp.filters.zones)  || []);
+    shfState.filters.facies = new Set((sp.filters && sp.filters.facies) || []);
+    _shfPrevDetected = {
+      wells:  ((sp.prevDetected && sp.prevDetected.wells)  || []).slice(),
+      zones:  ((sp.prevDetected && sp.prevDetected.zones)  || []).slice(),
+      facies: ((sp.prevDetected && sp.prevDetected.facies) || []).slice(),
+    };
+    _shfCategoryFp = null;
+    if (sp.fit && typeof sp.fit === 'object') {
+      const swirr = Number(sp.fit.swirr);
+      const he    = Number(sp.fit.he);
+      const lambda = Number(sp.fit.lambda);
+      shfState.fit = (Number.isFinite(swirr) && Number.isFinite(he) && Number.isFinite(lambda))
+        ? { swirr, he, lambda } : null;
+    } else {
+      shfState.fit = null;
+    }
   },
 
   // Debounced persist: pulls UI state and writes to localStorage.

@@ -17,6 +17,8 @@
 const shfState = {
   visible: false,
   filters: { wells: new Set(), zones: new Set(), facies: new Set() },
+  // Brooks-Corey overlay: { swirr, he, lambda, r2, n }. null = no curve drawn.
+  fit: null,
 };
 
 let _shfCategoryFp = null;
@@ -67,11 +69,27 @@ function showShfPanel() {
   shfState.visible = true;
   _updateShfToggleUI();
   refreshShfPanel();
+  Projects.saveDebounced();
 }
 
 function hideShfPanel() {
   document.getElementById('shf-section').style.display = 'none';
   shfState.visible = false;
+  _updateShfToggleUI();
+  Projects.saveDebounced();
+}
+
+// Sync DOM section display to user intent (shfState.visible) AND data
+// availability (lastHasShf). Called after init so persisted "visible=true"
+// actually restores the section on reload.
+function syncShfPanelDisplay() {
+  const section = document.getElementById('shf-section');
+  if (!section) return;
+  if (shfState.visible && lastHasShf) {
+    section.style.display = '';
+  } else {
+    section.style.display = 'none';
+  }
   _updateShfToggleUI();
 }
 
@@ -82,7 +100,7 @@ function initShfPanel() {
   if (toggleBtn) toggleBtn.style.display = lastHasShf ? '' : 'none';
   if (!lastHasShf) {
     document.getElementById('shf-section').style.display = 'none';
-    shfState.visible = false;
+    // Don't touch shfState.visible — that's user intent, not derived state.
     _updateShfToggleUI();
     // Don't touch _shfCategoryFp here. SHF availability flickers as the user
     // edits the porosity log (perm column briefly missing, FWL cleared, etc.)
@@ -133,6 +151,7 @@ function _buildShfFilterChips(containerId, items, set, labelFn) {
       if (set.has(item)) set.delete(item); else set.add(item);
       chip.classList.toggle('active');
       refreshShfPanel();
+      Projects.saveDebounced();
     });
     c.appendChild(chip);
   }
@@ -146,10 +165,11 @@ function shfFilteredPoints() {
     if (p.facies != null && !shfState.filters.facies.has(p.facies)) return false;
     // HAFWL < 0 means "below the free water level" — those points sit in the
     // water leg, not the SHF transition zone, so they're noise for this plot.
+    // Sw == 1 (and Sw > 1 from rounding/error) is also water-leg.
     return p.por != null && isFinite(p.por) && p.por > 0
         && p.perm != null && isFinite(p.perm) && p.perm > 0
         && p.hafwl != null && isFinite(p.hafwl) && p.hafwl >= 0
-        && p.sw != null && isFinite(p.sw);
+        && p.sw != null && isFinite(p.sw) && p.sw < 1;
   });
 }
 
@@ -222,6 +242,178 @@ function _stratifiedSample(arr, n) {
   return out;
 }
 
+// ============================================================
+// Brooks-Corey saturation-height fit
+// ============================================================
+//   Sw(h) = Swirr + (1 - Swirr) * (he / h)^λ      for h ≥ he
+//   Sw(h) = 1                                      for h < he   (water leg)
+//
+// Auto-fit uses log-log linearisation (linear in λ and log(he) for a fixed
+// Swirr) plus a 1-D grid search over Swirr to bypass the nonlinearity in
+// Swirr. Manual edits drive the curve directly; r² is recomputed on the
+// currently-filtered point set so the user gets a fresh quality readout
+// after either flow.
+
+function _shfBcSwAt(h, swirr, he, lambda) {
+  if (!(h > 0)) return 1;
+  if (h <= he) return 1;
+  const sw = swirr + (1 - swirr) * Math.pow(he / h, lambda);
+  return Math.max(0, Math.min(1, sw));
+}
+
+function _shfBcQuality(points, swirr, he, lambda) {
+  // Quality computed against the points the user is currently looking at.
+  // Sw=1 / hafwl<=0 are excluded upstream by shfFilteredPoints.
+  if (!points || points.length < 3) return null;
+  let sum = 0;
+  for (const p of points) sum += p.sw;
+  const mean = sum / points.length;
+  let sse = 0, sst = 0;
+  for (const p of points) {
+    const pred = _shfBcSwAt(p.hafwl, swirr, he, lambda);
+    sse += (p.sw - pred) * (p.sw - pred);
+    sst += (p.sw - mean) * (p.sw - mean);
+  }
+  return {
+    r2: sst > 0 ? Math.max(0, 1 - sse / sst) : 0,
+    n: points.length,
+    sse,
+  };
+}
+
+function _fitBrooksCoreyShf(points) {
+  if (!points || points.length < 3) return null;
+  const swArr = points.map(p => p.sw);
+  const hArr  = points.map(p => p.hafwl);
+
+  // Search Swirr across a wide physical range. The log-linearisation only
+  // uses observations where (Sw − Swirr) > 0, so a high Swirr candidate
+  // simply uses fewer points; that's fine as long as 3+ remain.
+  const swirrHi = 0.5;
+  const grid = 100;
+
+  let best = null;
+  for (let i = 0; i <= grid; i++) {
+    const swirr = swirrHi * (i / grid);
+    let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (let j = 0; j < points.length; j++) {
+      const num = swArr[j] - swirr;
+      if (num <= 0) continue;
+      const x = Math.log(hArr[j]);
+      const y = Math.log(num / (1 - swirr));
+      n++; sx += x; sy += y; sxx += x * x; sxy += x * y;
+    }
+    if (n < 3) continue;
+    const denom = n * sxx - sx * sx;
+    if (Math.abs(denom) < 1e-12) continue;
+    const slope = (n * sxy - sx * sy) / denom;     // = -λ
+    const intercept = (sy - slope * sx) / n;       // = λ * log(he)
+    const lambda = -slope;
+    if (!(lambda > 0)) continue;
+    const he = Math.exp(intercept / lambda);
+    if (!isFinite(he) || he <= 0) continue;
+    const q = _shfBcQuality(points, swirr, he, lambda);
+    if (!q) continue;
+    if (!best || q.sse < best.sse) {
+      best = { swirr, he, lambda, r2: q.r2, n: q.n, sse: q.sse };
+    }
+  }
+  return best;
+}
+
+function _shfFitInputs() {
+  return {
+    swirr: document.getElementById('shf-swirr'),
+    he:    document.getElementById('shf-he'),
+    lambda:document.getElementById('shf-lambda'),
+    stats: document.getElementById('shf-fit-stats'),
+    clear: document.getElementById('shf-fit-clear-btn'),
+  };
+}
+
+function _readShfFitInputs() {
+  const i = _shfFitInputs();
+  const swirr = Number(i.swirr.value);
+  const he = Number(i.he.value);
+  const lambda = Number(i.lambda.value);
+  if (!Number.isFinite(swirr) || swirr < 0 || swirr >= 1) return null;
+  if (!Number.isFinite(he) || he < 0) return null;
+  if (!Number.isFinite(lambda) || lambda <= 0) return null;
+  return { swirr, he, lambda };
+}
+
+function _writeShfFitInputs(fit) {
+  const i = _shfFitInputs();
+  i.swirr.value = Number(fit.swirr).toFixed(3);
+  i.he.value = Number(fit.he).toFixed(3);
+  i.lambda.value = Number(fit.lambda).toFixed(3);
+}
+
+function _updateShfFitStats() {
+  const i = _shfFitInputs();
+  if (!shfState.fit || shfState.fit.r2 == null) {
+    i.stats.style.display = 'none';
+    i.stats.textContent = '';
+    i.clear.style.display = 'none';
+    return;
+  }
+  i.stats.style.display = '';
+  i.stats.textContent = 'R² = ' + shfState.fit.r2.toFixed(3)
+    + '   ·   n = ' + shfState.fit.n;
+  i.clear.style.display = '';
+}
+
+// Called by the auto-fit button.
+function shfAutoFit() {
+  const pts = shfFilteredPoints();
+  const fit = _fitBrooksCoreyShf(pts);
+  if (!fit) {
+    const stats = document.getElementById('shf-fit-stats');
+    stats.style.display = '';
+    stats.textContent = 'Not enough usable samples to fit (need 3+ with Sw < 1).';
+    return;
+  }
+  shfState.fit = fit;
+  _writeShfFitInputs(fit);
+  _updateShfFitStats();
+  refreshShfPanel();
+  Projects.saveDebounced();
+}
+
+// Called by the clear button.
+function shfClearFit() {
+  shfState.fit = null;
+  _updateShfFitStats();
+  refreshShfPanel();
+  Projects.saveDebounced();
+}
+
+// Called when the user types in any of the three fit inputs.
+function shfFitInputChanged() {
+  const params = _readShfFitInputs();
+  if (!params) return;  // invalid mid-typing, ignore
+  const q = _shfBcQuality(shfFilteredPoints(), params.swirr, params.he, params.lambda);
+  shfState.fit = {
+    swirr: params.swirr, he: params.he, lambda: params.lambda,
+    r2: q ? q.r2 : null, n: q ? q.n : 0,
+  };
+  _updateShfFitStats();
+  refreshShfPanel();
+  Projects.saveDebounced();
+}
+
+// Re-sync inputs to a possibly-loaded shfState.fit (after applyToUI).
+function syncShfFitInputs() {
+  if (shfState.fit) {
+    _writeShfFitInputs(shfState.fit);
+    // Recompute r² against current filtered points so reload doesn't show
+    // stale stats from the previous session.
+    const q = _shfBcQuality(shfFilteredPoints(), shfState.fit.swirr, shfState.fit.he, shfState.fit.lambda);
+    if (q) { shfState.fit.r2 = q.r2; shfState.fit.n = q.n; }
+  }
+  _updateShfFitStats();
+}
+
 // Linear-interpolation percentile (NumPy-default style). Input must be sorted
 // ascending. Used to clip color scales to p05/p95 so a handful of error /
 // bad-quality samples can't compress the rainbow ramp.
@@ -261,6 +453,12 @@ function _refreshShfPanelImpl() {
   if (sec.style.display === 'none') return;
 
   const pts = shfFilteredPoints();
+  // Keep the BC fit r² in sync with the currently-filtered point set so the
+  // stats readout reflects what's on screen, not a snapshot from auto-fit.
+  if (shfState.fit) {
+    const q = _shfBcQuality(pts, shfState.fit.swirr, shfState.fit.he, shfState.fit.lambda);
+    if (q) { shfState.fit.r2 = q.r2; shfState.fit.n = q.n; _updateShfFitStats(); }
+  }
   const maxInput = document.getElementById('shf-max');
   const maxPts = Math.max(10, parseInt(maxInput.value) || 100);
   const sampled = _stratifiedSample(pts, maxPts);
@@ -304,17 +502,29 @@ function _ensureShfTooltipEl() {
   return _shfTooltipEl;
 }
 
-function _shfTooltip(p) {
+// HTML tooltip body. Two label/value pairs per row in a 4-column grid; the
+// well name spans both columns at the top. Values fall back to '—' when
+// the source row didn't carry the column.
+function _shfTooltipHtml(p) {
   const num = (v, d) => (v == null || !isFinite(v)) ? '—' : Number(v).toFixed(d);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
   const rqi = (p.por != null && p.perm != null && p.por > 0)
     ? Math.sqrt(p.perm / p.por) : null;
-  return p.well
-    + '\nMD: ' + num(p.md, 3)
-    + '\nHAFWL: ' + num(p.hafwl, 2)
-    + '\nφ: ' + num(p.por, 4)
-    + '\nk: ' + num(p.perm, 3)
-    + '\nSw: ' + num(p.sw, 4)
-    + '\n√(k/φ): ' + num(rqi, 3);
+  const pairs = [
+    ['MD',     num(p.md, 3)],
+    ['TVDSS',  num(p.tvdss, 2)],
+    ['HAFWL',  num(p.hafwl, 2)],
+    ['Sw',     num(p.sw, 4)],
+    ['φ',      num(p.por, 4)],
+    ['k',      num(p.perm, 3)],
+    ['√(k/φ)', num(rqi, 3)],
+  ];
+  let body = '';
+  for (const [k, v] of pairs) {
+    body += '<span class="tt-k">' + esc(k) + '</span><span class="tt-v">' + esc(v) + '</span>';
+  }
+  return '<div class="tt-name">' + esc(p.well) + '</div>'
+       + '<div class="tt-grid">' + body + '</div>';
 }
 
 function _colorMetricLabel(mode) {
@@ -403,7 +613,7 @@ function _renderShfPlot(points) {
       stroke: color, 'stroke-opacity': 0.95, 'stroke-width': 0.6,
     }, svg);
     c.addEventListener('mouseenter', () => {
-      tip.textContent = _shfTooltip(p);
+      tip.innerHTML = _shfTooltipHtml(p);
       tip.style.display = 'block';
     });
     c.addEventListener('mousemove', (ev) => {
@@ -415,8 +625,26 @@ function _renderShfPlot(points) {
     c.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
   }
 
-  // SE-equation overlay placeholder: a future session will draw the fit
-  // curve here using shfState.equation (Brooks-Corey λ, J-function, etc).
+  // Brooks-Corey overlay. Sample h across the visible y range and connect
+  // the (Sw(h), h) points; the curve has a kink at h = he where it switches
+  // from the water leg (Sw=1) into the BC tail.
+  if (shfState.fit) {
+    const f = shfState.fit;
+    const N = 160;
+    let d = '';
+    for (let i = 0; i <= N; i++) {
+      const h = yLo + (yHi - yLo) * (i / N);
+      const sw = _shfBcSwAt(h, f.swirr, f.he, f.lambda);
+      const x = xScale(Math.max(xLo, Math.min(xHi, sw)));
+      const y = yScale(h);
+      d += (i === 0 ? 'M' : 'L') + x.toFixed(2) + ',' + y.toFixed(2);
+    }
+    svgEl('path', {
+      d, fill: 'none',
+      stroke: '#1f1d18', 'stroke-width': 1.8,
+      'stroke-dasharray': '6,4', 'stroke-linecap': 'round',
+    }, svg);
+  }
 
   _renderShfColorBar(_colorMetricLabel(colorBy), cLo, cHi);
 }

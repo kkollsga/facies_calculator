@@ -154,6 +154,12 @@ function autoRefresh() {
   refreshPlotPanel();
   initShfPanel();
   refreshShfPanel();
+  // Apply persisted visibility AFTER init/refresh — restores plot/SHF section
+  // visibility on page reload, doesn't clobber user intent on data flickers.
+  syncPlotPanelDisplay();
+  syncShfPanelDisplay();
+  // Restore BC fit inputs/stats from any persisted shfState.fit.
+  syncShfFitInputs();
 
   const allCodes = new Set();
   results.forEach(r => r.faciesZ.forEach((_, k) => allCodes.add(k)));
@@ -191,8 +197,10 @@ function hideResultsAndPlot() {
   document.getElementById('copy-btn').disabled = true;
   // Empty state — restore the empty-state actions block.
   document.getElementById('empty-state-actions').style.display = '';
-  hidePlotPanel();
-  hideShfPanel();
+  // Hide DOM sections without touching plotState.visible / shfState.visible
+  // — those represent user intent and should be restored when data returns.
+  document.getElementById('plot-section').style.display = 'none';
+  document.getElementById('shf-section').style.display = 'none';
   // Plot + SHF toggles hide alongside the rest of the data UI.
   const plotBtn = document.getElementById('plot-toggle-btn');
   if (plotBtn) plotBtn.style.display = 'none';
@@ -256,6 +264,11 @@ document.getElementById('shf-toggle-btn').addEventListener('click', () => {
 });
 document.getElementById('shf-color').addEventListener('change', refreshShfPanel);
 document.getElementById('shf-max').addEventListener('input', refreshShfPanel);
+document.getElementById('shf-swirr').addEventListener('input', shfFitInputChanged);
+document.getElementById('shf-he').addEventListener('input', shfFitInputChanged);
+document.getElementById('shf-lambda').addEventListener('input', shfFitInputChanged);
+document.getElementById('shf-fit-btn').addEventListener('click', shfAutoFit);
+document.getElementById('shf-fit-clear-btn').addEventListener('click', shfClearFit);
 
 // Inputs collapse bar
 function _updateInputsToggleUI() {

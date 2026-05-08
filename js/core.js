@@ -364,6 +364,7 @@ function enrichPorPoints(porRows, zones, faciesRows, renames) {
       perm:  (r.perm  != null && isFinite(r.perm))  ? r.perm  : null,
       hafwl: (r.hafwl != null && isFinite(r.hafwl)) ? r.hafwl : null,
       sw:    (r.sw    != null && isFinite(r.sw))    ? r.sw    : null,
+      tvdss: (r.tvdss != null && isFinite(r.tvdss)) ? r.tvdss : null,
       zone, facies,
     });
   }

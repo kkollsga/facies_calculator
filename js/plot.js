@@ -79,6 +79,7 @@ function buildFilterChips(containerId, items, set, labelFn) {
       // a filter just affects what the cross-plot draws and what the next-Add
       // captures. The active regression's locked filters are unchanged either way.
       refreshPlotPanel();
+      Projects.saveDebounced();
     });
     c.appendChild(chip);
   }
@@ -89,9 +90,21 @@ function buildFilterChips(containerId, items, set, labelFn) {
 // runs but the structure hasn't actually changed — preserves the user's
 // filter selections and regression list across minor edits.
 let _plotCategoryFp = null;
+// Tracks the last detected category lists so reconcile (in initPlotPanel)
+// can distinguish "brand-new category → default include" from "previously
+// known category that the user explicitly excluded → keep excluded".
+let _plotPrevDetected = { wells: [], zones: [], facies: [] };
 
 function resetPlotCategoryCache() {
   _plotCategoryFp = null;
+  _plotPrevDetected = { wells: [], zones: [], facies: [] };
+}
+
+function _reconcilePlotFilter(set, prevDetected, newDetected) {
+  const newDet = new Set(newDetected);
+  const prevDet = new Set(prevDetected);
+  for (const v of [...set]) if (!newDet.has(v)) set.delete(v);
+  for (const v of newDetected) if (!prevDet.has(v)) set.add(v);
 }
 
 function _categoryFingerprint() {
@@ -127,9 +140,11 @@ function initPlotPanel() {
   if (toggleBtn) toggleBtn.style.display = lastPorPoints.length > 0 ? '' : 'none';
   if (lastPorPoints.length === 0) {
     document.getElementById('plot-section').style.display = 'none';
-    plotState.visible = false;
+    // Don't touch plotState.visible — that's the user's intent, not a derived
+    // state. When data returns, syncPlotPanelDisplay restores the section.
     _updatePlotToggleUI();
-    _plotCategoryFp = '';
+    // Don't reset _plotCategoryFp here — survives short data-edit flickers
+    // so the user's filter selections aren't wiped on every transient parse.
     return;
   }
 
@@ -143,13 +158,16 @@ function initPlotPanel() {
   }
   _plotCategoryFp = newFp;
 
-  // Categories changed — full reset.
+  // Categories changed — reconcile so user exclusions survive. Brand-new
+  // categories (never seen before) get default-included; vanished ones
+  // are dropped.
   const wells = uniqueValues(lastPorPoints, 'well');
   const zones = uniqueValues(lastPorPoints, 'zone');
   const facies = uniqueValues(lastPorPoints, 'facies');
-  plotState.filters.wells = new Set(wells);
-  plotState.filters.zones = new Set(zones);
-  plotState.filters.facies = new Set(facies);
+  _reconcilePlotFilter(plotState.filters.wells,  _plotPrevDetected.wells,  wells);
+  _reconcilePlotFilter(plotState.filters.zones,  _plotPrevDetected.zones,  zones);
+  _reconcilePlotFilter(plotState.filters.facies, _plotPrevDetected.facies, facies);
+  _plotPrevDetected = { wells, zones, facies };
   buildFilterChips('filter-wells', wells, plotState.filters.wells);
   buildFilterChips('filter-zones', zones, plotState.filters.zones);
   buildFilterChips('filter-facies', facies, plotState.filters.facies, f => {
@@ -176,6 +194,7 @@ function hidePlotPanel() {
   document.getElementById('plot-section').style.display = 'none';
   plotState.visible = false;
   _updatePlotToggleUI();
+  Projects.saveDebounced();
 }
 
 function showPlotPanel() {
@@ -185,6 +204,22 @@ function showPlotPanel() {
   // First-open fix: previously the canvas stayed blank until the user wiggled
   // a control because showPlotPanel didn't kick off a render itself.
   refreshPlotPanel();
+  Projects.saveDebounced();
+}
+
+// Sync plot section DOM visibility to plotState.visible (the user's
+// preference) when data is available. Called by autoRefresh after init so
+// reload/visit-with-persisted-state actually restores the section.
+function syncPlotPanelDisplay() {
+  const section = document.getElementById('plot-section');
+  if (!section) return;
+  const dataAvailable = lastPorPoints.length > 0;
+  if (plotState.visible && dataAvailable) {
+    section.style.display = '';
+  } else {
+    section.style.display = 'none';
+  }
+  _updatePlotToggleUI();
 }
 
 function filteredPoints() {

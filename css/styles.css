@@ -402,13 +402,25 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   display: none;
   padding: 7px 10px;
   font-family: 'IBM Plex Mono', monospace; font-size: 11px; line-height: 1.45;
-  white-space: pre;
   background: rgba(40, 38, 32, 0.96); color: #f5efdf;
   border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 3px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
   transform: translate(10px, 10px);
   z-index: 20;
+  min-width: 240px;
 }
+.shf-tooltip .tt-name {
+  font-family: 'IBM Plex Sans', sans-serif; font-weight: 600; font-size: 12px;
+  margin-bottom: 6px; color: #fdf7e3;
+}
+.shf-tooltip .tt-grid {
+  display: grid;
+  grid-template-columns: max-content auto max-content auto;
+  column-gap: 14px; row-gap: 2px;
+  align-items: baseline;
+}
+.shf-tooltip .tt-k { color: #c4b89a; }
+.shf-tooltip .tt-v { color: #f5efdf; text-align: right; padding-right: 4px; }
 .plot-filters {
   display: flex; flex-direction: column; gap: 12px;
   padding: 12px; background: #fcf9f1; border: 1px solid var(--rule); border-radius: 3px;
