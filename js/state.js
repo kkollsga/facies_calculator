@@ -20,6 +20,8 @@ const state = {
   pivotFilterEnabled: false,
   pivotFilters: { wells: new Set(), zones: new Set(), facies: new Set() },
   pivotFiltersPrevDetected: { wells: [], zones: [], facies: [] },
+  // Pivot output (#results-section) collapse toggle. Persisted per project.
+  resultsCollapsed: false,
 };
 
 // Snapshot of the most recent successful calculation, used by render, plot, and exports.
@@ -41,7 +43,10 @@ const plotState = {
 
 // Regression-panel state. Each regression captures a snapshot of the filter sets
 // at creation time so refits stay tied to the originally selected data.
-// Each entry: { id, name, degree, color, coeffs, r2, filters: {wells,zones,facies}, n, range:{phiLo,phiHi}, visible }
+// Each entry: { id, name, degree, color, coeffs, fittedCoeffs, locked, r2,
+//               filters: {wells,zones,facies}, n, range:{phiLo,phiHi}, visible }
+// `coeffs` is the live curve (may be hand-edited when `locked` is false).
+// `fittedCoeffs` is the snapshot from the last least-squares fit, used by Reset.
 const regState = {
   list: [],
   activeId: null,

@@ -209,6 +209,9 @@ function autoRefresh() {
   // Pivot filter toggle is only meaningful when there's a pivot.
   document.getElementById('pivot-filter-btn').style.display = '';
   _updatePivotFilterToggleUI();
+  // Pivot output collapse toggle is only meaningful with a pivot, too.
+  document.getElementById('results-toggle-btn').style.display = '';
+  _applyResultsCollapse();
 }
 
 function hideResultsAndPlot() {
@@ -231,6 +234,9 @@ function hideResultsAndPlot() {
   const pivBtn = document.getElementById('pivot-filter-btn');
   if (pivBtn) pivBtn.style.display = 'none';
   document.getElementById('pivot-filters').style.display = 'none';
+  // Pivot output collapse toggle hides alongside the rest of the data UI.
+  const resBtn = document.getElementById('results-toggle-btn');
+  if (resBtn) resBtn.style.display = 'none';
   // Reset inputs to expanded so the user can paste data straight away,
   // and hide the toggle (no data → nothing to collapse).
   const inputsArea = document.getElementById('data-inputs-area');
@@ -355,6 +361,25 @@ function _updateInputsToggleUI() {
 document.getElementById('inputs-toggle-btn').addEventListener('click', () => {
   document.getElementById('data-inputs-area').classList.toggle('collapsed');
   _updateInputsToggleUI();
+  Projects.saveDebounced();
+});
+
+// Pivot output collapse bar (mirrors the data-inputs collapse). The whole
+// #results-section hides; the Hide/Show button stays visible above it so the
+// user can re-expand. State persists per project via state.resultsCollapsed.
+function _applyResultsCollapse() {
+  const btn = document.getElementById('results-toggle-btn');
+  const sec = document.getElementById('results-section');
+  if (!btn || !sec) return;
+  const collapsed = !!state.resultsCollapsed;
+  sec.style.display = collapsed ? 'none' : '';
+  btn.setAttribute('aria-expanded', String(!collapsed));
+  const lbl = btn.querySelector('.collapse-label');
+  if (lbl) lbl.textContent = collapsed ? 'Show pivot output' : 'Hide pivot output';
+}
+document.getElementById('results-toggle-btn').addEventListener('click', () => {
+  state.resultsCollapsed = !state.resultsCollapsed;
+  _applyResultsCollapse();
   Projects.saveDebounced();
 });
 

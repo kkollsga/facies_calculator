@@ -294,6 +294,16 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   background: #fdfaf3;
 }
 .pivot-copy-btn svg { display: block; }
+.results-head-filter-btn {
+  /* Reset the wide-bar margin from .collapse-toggle so it sits compactly
+     between the column toggles and the copy button. */
+  margin: 6px 0 0;
+  padding: 4px 8px;
+  border: 1px solid var(--rule); border-radius: 3px;
+  background: #fdfaf3;
+  flex-shrink: 0;
+}
+.results-head-filter-btn:hover { background: #f0e6cf; }
 .col-toggles {
   display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
   padding: 8px 12px; background: var(--panel); border: 1px solid var(--rule);
@@ -391,9 +401,13 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   font-size: 11.5px; padding: 0 4px; min-height: 18px;
 }
 .plot-legend-item { display: inline-flex; align-items: center; gap: 5px; }
-.plot-legend-swatch { width: 12px; height: 12px; border-radius: 2px; }
-.plot-legend-swatch-clickable { cursor: pointer; outline: 1px solid transparent; transition: outline-color .12s, transform .12s; }
-.plot-legend-swatch-clickable:hover { outline-color: var(--ink-soft); transform: scale(1.12); }
+.plot-legend-swatch {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; line-height: 0;
+}
+.plot-legend-swatch svg { display: block; }
+.plot-legend-swatch-clickable { cursor: pointer; border-radius: 50%; transition: transform .12s, background .12s; }
+.plot-legend-swatch-clickable:hover { transform: scale(1.18); background: rgba(0,0,0,0.04); }
 .plot-legend-shape svg { width: 14px; height: 14px; }
 .plot-legend-shape-icon { display: inline-flex; cursor: pointer; padding: 1px; border-radius: 2px; line-height: 0; }
 .plot-legend-shape-icon:hover { background: var(--cream-soft, #f1eadb); }
@@ -414,7 +428,6 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .plot-legend-reg-swatch:hover { outline-color: var(--ink-soft); transform: scaleY(2); }
 .plot-legend-reg-name { font-weight: 600; cursor: pointer; }
 .plot-legend-reg-name:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
-.plot-legend-reg-name.active { text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
 .plot-legend-reg-eq {
   font-family: 'IBM Plex Mono', monospace; font-size: 10.5px;
   color: var(--ink); padding-left: 24px; cursor: pointer;
@@ -435,7 +448,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .style-picker-grid {
   display: grid; gap: 4px;
 }
-.style-picker-grid-color { grid-template-columns: repeat(7, 18px); }
+.style-picker-grid-color { grid-template-columns: repeat(5, 18px); }
 .style-picker-grid-shape { grid-template-columns: repeat(6, 22px); }
 .style-picker-color-cell {
   width: 18px; height: 18px; border-radius: 3px;
@@ -869,13 +882,27 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .plot-reg-btn:hover { background: #f0e6cf; border-color: var(--ink); }
 .plot-reg-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 /* Active regression detail: landscape strip below the plot canvas + legend.
-   Spans the canvas column width so stats lay out horizontally and locked
-   filters get a 3-column grid (Wells | Zones | Facies). */
+   Always present in the DOM but collapses to zero height (no padding/border)
+   when no regression is active, so there's no residual block. The .open class
+   controls open/closed; max-height + opacity + spacing all animate together. */
 .plot-reg-active-detail {
-  padding: 12px 14px; background: #fdfaf3; border: 1px solid var(--rule);
-  border-radius: 3px;
-  display: grid; grid-template-columns: 1fr; gap: 10px;
-  margin-top: 4px;
+  background: #fdfaf3; border: 1px solid var(--rule); border-radius: 3px;
+  display: grid; grid-template-columns: 1fr;
+  /* Closed state */
+  max-height: 0; opacity: 0;
+  padding: 0 14px; gap: 0; margin-top: 0; border-width: 0;
+  overflow: hidden;
+  transition:
+    max-height 0.28s ease,
+    opacity 0.22s ease,
+    padding 0.28s ease,
+    gap 0.28s ease,
+    margin-top 0.28s ease,
+    border-width 0.28s ease;
+}
+.plot-reg-active-detail.open {
+  max-height: 1200px; opacity: 1;
+  padding: 12px 14px; gap: 10px; margin-top: 4px; border-width: 1px;
 }
 .reg-detail-head {
   display: flex; align-items: center; gap: 8px;
@@ -911,6 +938,44 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   font-family: 'IBM Plex Mono', monospace; font-size: 9.5px;
   text-transform: uppercase; letter-spacing: 0.14em; color: var(--ink-soft);
   padding-top: 2px;
+}
+.reg-detail-coef-head {
+  display: flex; align-items: center; gap: 8px;
+}
+.reg-detail-lock-btn {
+  font-size: 13px; line-height: 1;
+  padding: 2px 6px; cursor: pointer;
+  background: transparent; border: 1px solid var(--rule);
+  border-radius: 3px; color: var(--ink);
+}
+.reg-detail-lock-btn:hover { border-color: var(--ink-soft); background: #fff; }
+.reg-detail-lock-btn.unlocked {
+  background: #fff7d6; border-color: #c8a23a; color: #6a4f0a;
+}
+.reg-detail-reset-btn {
+  margin-left: auto;
+  width: auto; padding: 4px 10px; font-size: 11px;
+}
+.reg-detail-coefs {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 14px;
+}
+@media (max-width: 720px) {
+  .reg-detail-coefs { grid-template-columns: 1fr; }
+}
+.reg-detail-coef-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.reg-detail-coef-lbl {
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+  color: var(--ink-soft); flex: 0 0 auto; min-width: 90px;
+}
+.reg-detail-coef-inp {
+  flex: 1 1 auto; min-width: 0;
+  text-align: right; font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+}
+.reg-detail-coef-inp:disabled {
+  background: #f1eadb; color: var(--ink-soft); cursor: not-allowed;
 }
 .reg-detail-filters {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 18px;

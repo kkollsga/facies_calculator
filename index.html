@@ -108,6 +108,11 @@
     <button id="test-btn">Run self-tests</button>
   </div>
 
+  <button class="collapse-toggle" id="results-toggle-btn" type="button" style="display:none;" aria-expanded="true" aria-controls="results-section">
+    <span class="collapse-chev" aria-hidden="true"></span>
+    <span class="collapse-label">Hide pivot output</span>
+  </button>
+
   <div class="results" id="results-section" style="display:none;">
     <div class="results-head">
       <div class="results-head-left">
@@ -130,16 +135,13 @@
           <label class="tog" id="t-perm-label"><input type="checkbox" id="t-perm" checked disabled><span class="tog-box"></span>Permeability</label>
         </div>
       </div>
+      <button class="collapse-toggle results-head-filter-btn" id="pivot-filter-btn" type="button" style="display:none;" aria-expanded="false" aria-controls="pivot-filters">
+        <span class="collapse-chev" aria-hidden="true"></span>
+        <span class="collapse-label">Show filters</span>
+      </button>
       <button class="pivot-copy-btn" id="pivot-copy-btn" type="button" title="Copy table to clipboard"></button>
     </div>
-    <div class="table-scroll">
-      <table id="pivot-table"></table>
-    </div>
 
-    <button class="collapse-toggle" id="pivot-filter-btn" type="button" style="display:none;" aria-expanded="false" aria-controls="pivot-filters">
-      <span class="collapse-chev" aria-hidden="true"></span>
-      <span class="collapse-label">Show filters</span>
-    </button>
     <div class="plot-filters pivot-filters" id="pivot-filters" style="display:none;">
       <div class="plot-filter-block">
         <div class="plot-filter-head">Wells</div>
@@ -153,6 +155,10 @@
         <div class="plot-filter-head">Facies</div>
         <div class="plot-filter-chips" id="pivot-filter-facies"></div>
       </div>
+    </div>
+
+    <div class="table-scroll">
+      <table id="pivot-table"></table>
     </div>
   </div>
 
@@ -256,7 +262,7 @@
       <div class="plot-canvas-wrap">
         <div class="plot-canvas" id="plot-canvas"></div>
         <div class="plot-legend" id="plot-legend"></div>
-        <div class="plot-reg-active-detail" id="reg-active-detail" style="display:none;"></div>
+        <div class="plot-reg-active-detail" id="reg-active-detail"></div>
       </div>
 
       <div class="plot-filters">

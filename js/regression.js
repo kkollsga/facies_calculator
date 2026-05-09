@@ -142,6 +142,8 @@ function regAddFromCurrentFilters() {
 
   const reg = {
     id, name, degree, color, coeffs, r2,
+    fittedCoeffs: coeffs.slice(),
+    locked: true,
     filters: snapshotFilters(),
     n: xs.length,
     range: { phiLo: Math.min.apply(null, xs), phiHi: Math.max.apply(null, xs) },
@@ -259,6 +261,8 @@ function regChangeOrder(id, newDegree) {
   }
   r.degree = newDegree;
   r.coeffs = coeffs;
+  r.fittedCoeffs = coeffs.slice();
+  r.locked = true;
   r.r2 = rSquared(xs, ys, coeffs);
   r.n = xs.length;
   r.range = { phiLo: Math.min.apply(null, xs), phiHi: Math.max.apply(null, xs) };
@@ -312,11 +316,15 @@ function rebuildRegList() {
     for (const r of regState.list) {
       const item = document.createElement('div');
       item.className = 'plot-reg-item' + (r.id === regState.activeId ? ' active' : '') + (r.visible ? '' : ' disabled');
-      item.title = 'Click to make active and restore its captured filters';
+      item.title = r.id === regState.activeId
+        ? 'Click to deselect (collapse the detail panel)'
+        : 'Click to make active and reveal the detail panel';
       item.addEventListener('click', (e) => {
-        // Don't activate if user clicked one of the icon buttons
+        // Don't (de)activate if user clicked one of the icon buttons
         if (e.target.closest('.plot-reg-icon-btn')) return;
-        regSetActive(r.id);
+        // Toggle: clicking the already-active pill deselects it.
+        if (r.id === regState.activeId) regClearActive();
+        else regSetActive(r.id);
       });
 
       const sw = document.createElement('span');
@@ -367,17 +375,38 @@ function rebuildRegList() {
   rebuildRegActiveDetail();
 }
 
+// Recompute R² (and n) against the locked-filter data using r.coeffs in their
+// current form. Used after a manual coefficient edit or a Reset, so the stat
+// stays consistent with the curve actually being drawn. Range is preserved —
+// it describes the φ extent of the original fit, not the curve.
+function regRecomputeR2(r) {
+  const pts = lastPorPoints.filter(p =>
+    r.filters.wells.has(p.well) &&
+    r.filters.zones.has(p.zone) &&
+    (p.facies == null || r.filters.facies.has(p.facies)) &&
+    p.por != null && isFinite(p.por) &&
+    p.perm != null && isFinite(p.perm) && p.perm > 0
+  );
+  r.n = pts.length;
+  if (pts.length === 0) { r.r2 = 0; return; }
+  const xs = pts.map(p => p.por);
+  const ys = pts.map(p => Math.log10(p.perm));
+  r.r2 = rSquared(xs, ys, r.coeffs);
+}
+
 function rebuildRegActiveDetail() {
   const box = document.getElementById('reg-active-detail');
   const r = regState.list.find(x => x.id === regState.activeId);
   // The detail strip is a cross-plot affordance; suppress it in histogram mode
-  // even if a regression is technically still selected.
+  // even if a regression is technically still selected. Use the .open class
+  // (max-height + opacity transition) so the strip animates closed instead of
+  // popping out — and keep stale content in place during the collapse so the
+  // user doesn't see it disappear before the box does.
   if (!r || plotState.type !== 'cross') {
-    box.style.display = 'none';
-    box.innerHTML = '';
+    box.classList.remove('open');
     return;
   }
-  box.style.display = '';
+  box.classList.add('open');
   box.innerHTML = '';
 
   // Header strip with the regression name and color cue
@@ -393,10 +422,12 @@ function rebuildRegActiveDetail() {
   head.appendChild(headTxt);
   box.appendChild(head);
 
-  // Stats strip: n, R², phi range, degree
+  // Stats strip: n, R², phi range, degree. The n / r² cells carry data-stat so
+  // a manual coefficient edit can patch them in place without a full rebuild
+  // (which would steal focus from the input the user is typing in).
   const stats = document.createElement('div');
   stats.className = 'reg-detail-stats';
-  function statCell(label, value) {
+  function statCell(label, value, key) {
     const c = document.createElement('div');
     c.className = 'reg-detail-stat';
     const l = document.createElement('div');
@@ -404,12 +435,13 @@ function rebuildRegActiveDetail() {
     l.textContent = label;
     const v = document.createElement('div');
     v.className = 'reg-detail-stat-val';
+    if (key) v.dataset.stat = key;
     v.textContent = value;
     c.appendChild(l); c.appendChild(v);
     stats.appendChild(c);
   }
-  statCell('n', String(r.n));
-  statCell('R²', r.r2.toFixed(4));
+  statCell('n', String(r.n), 'n');
+  statCell('R²', r.r2.toFixed(4), 'r2');
   statCell('φ range', r.range.phiLo.toFixed(3) + '–' + r.range.phiHi.toFixed(3));
   statCell('degree', String(r.degree));
   box.appendChild(stats);
@@ -419,6 +451,81 @@ function rebuildRegActiveDetail() {
   eq.className = 'reg-detail-eq';
   eq.textContent = petrelFormula(r.coeffs);
   box.appendChild(eq);
+
+  // Coefficients section: lock toggle + per-coefficient inputs + reset.
+  // Inputs are disabled while locked so the curve stays tied to the fit; once
+  // unlocked the user can hand-tune the polynomial. Reset always restores the
+  // last fitted snapshot regardless of lock state.
+  const coefHead = document.createElement('div');
+  coefHead.className = 'reg-detail-section-head reg-detail-coef-head';
+  const coefHeadLabel = document.createElement('span');
+  coefHeadLabel.textContent = 'Coefficients';
+  coefHead.appendChild(coefHeadLabel);
+  const lockBtn = document.createElement('button');
+  lockBtn.type = 'button';
+  lockBtn.className = 'reg-detail-lock-btn' + (r.locked ? '' : ' unlocked');
+  lockBtn.title = r.locked ? 'Locked. Click to enable manual editing.' : 'Unlocked. Click to lock.';
+  lockBtn.setAttribute('aria-label', r.locked ? 'Unlock coefficients' : 'Lock coefficients');
+  lockBtn.textContent = r.locked ? '🔒' : '🔓';
+  lockBtn.addEventListener('click', () => {
+    r.locked = !r.locked;
+    rebuildRegActiveDetail();
+    Projects.saveDebounced();
+  });
+  coefHead.appendChild(lockBtn);
+  const resetBtn = document.createElement('button');
+  resetBtn.type = 'button';
+  resetBtn.className = 'plot-reg-btn reg-detail-reset-btn';
+  resetBtn.textContent = 'Reset to fit';
+  resetBtn.title = 'Restore the originally fitted coefficient values';
+  resetBtn.addEventListener('click', () => {
+    r.coeffs = r.fittedCoeffs.slice();
+    r.locked = true;
+    regRecomputeR2(r);
+    rebuildRegList();
+    rebuildRegActiveDetail();
+    refreshPlotPanel();
+    Projects.saveDebounced();
+  });
+  coefHead.appendChild(resetBtn);
+  box.appendChild(coefHead);
+
+  const coefRows = document.createElement('div');
+  coefRows.className = 'reg-detail-coefs';
+  const COEF_LABEL = ['a₀', 'a₁', 'a₂', 'a₃', 'a₄', 'a₅'];
+  const TERM_SUFFIX = ['', ' · PHIE', ' · PHIE²', ' · PHIE³', ' · PHIE⁴', ' · PHIE⁵'];
+  for (let i = 0; i < r.coeffs.length; i++) {
+    const row = document.createElement('div');
+    row.className = 'reg-detail-coef-row';
+    const lab = document.createElement('span');
+    lab.className = 'reg-detail-coef-lbl';
+    lab.textContent = (COEF_LABEL[i] || ('a' + i)) + (TERM_SUFFIX[i] || (' · PHIE^' + i));
+    row.appendChild(lab);
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = 'any';
+    inp.className = 'plot-num reg-detail-coef-inp';
+    inp.value = String(r.coeffs[i]);
+    inp.disabled = !!r.locked;
+    inp.addEventListener('input', () => {
+      const v = parseFloat(inp.value);
+      if (!isFinite(v)) return;
+      r.coeffs[i] = v;
+      regRecomputeR2(r);
+      // Patch the stat + equation displays in place to preserve input focus.
+      const eqEl = box.querySelector('.reg-detail-eq');
+      if (eqEl) eqEl.textContent = petrelFormula(r.coeffs);
+      const r2El = box.querySelector('[data-stat="r2"]');
+      if (r2El) r2El.textContent = r.r2.toFixed(4);
+      const nEl = box.querySelector('[data-stat="n"]');
+      if (nEl) nEl.textContent = String(r.n);
+      refreshPlotPanel();
+      Projects.saveDebounced();
+    });
+    row.appendChild(inp);
+    coefRows.appendChild(row);
+  }
+  box.appendChild(coefRows);
 
   // Locked filters section
   const filtHead = document.createElement('div');

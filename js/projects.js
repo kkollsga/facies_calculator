@@ -21,12 +21,15 @@ const PROJECTS_STORAGE_KEY = 'fzp_projects_v1';
 // round-trip through arrays. The shape matches what regression.js builds in
 // regAddFromCurrentFilters, plus a per-regression `visible` flag.
 function _serializeRegression(r) {
+  const coeffs = Array.isArray(r.coeffs) ? r.coeffs.slice() : [];
   return {
     id: r.id,
     name: r.name,
     degree: r.degree,
     color: r.color,
-    coeffs: Array.isArray(r.coeffs) ? r.coeffs.slice() : [],
+    coeffs,
+    fittedCoeffs: Array.isArray(r.fittedCoeffs) ? r.fittedCoeffs.slice() : coeffs.slice(),
+    locked: r.locked !== false,
     r2: r.r2,
     n: r.n,
     range: r.range ? { phiLo: r.range.phiLo, phiHi: r.range.phiHi } : { phiLo: 0, phiHi: 0 },
@@ -39,12 +42,17 @@ function _serializeRegression(r) {
   };
 }
 function _deserializeRegression(o) {
+  const coeffs = Array.isArray(o.coeffs) ? o.coeffs.slice() : [];
   return {
     id: o.id,
     name: o.name || ('Reg ' + o.id),
     degree: o.degree | 0,
     color: o.color,
-    coeffs: Array.isArray(o.coeffs) ? o.coeffs.slice() : [],
+    coeffs,
+    // Older saves may not have fittedCoeffs — fall back to coeffs so Reset is
+    // still meaningful (a no-op if the user never unlocked the curve).
+    fittedCoeffs: Array.isArray(o.fittedCoeffs) ? o.fittedCoeffs.slice() : coeffs.slice(),
+    locked: o.locked !== false,
     r2: typeof o.r2 === 'number' ? o.r2 : 0,
     n: o.n | 0,
     range: { phiLo: o.range && o.range.phiLo, phiHi: o.range && o.range.phiHi },
@@ -158,6 +166,9 @@ const Projects = {
     // the same view you left.
     const inputsArea = document.getElementById('data-inputs-area');
     p.inputsCollapsed = !!(inputsArea && inputsArea.classList.contains('collapsed'));
+    // Pivot output collapse toggle. Mirrors the data-inputs collapse: stored
+    // per project so a user who folds the table away keeps it folded.
+    p.resultsCollapsed = !!state.resultsCollapsed;
     const togPorEl  = document.getElementById('t-porosity');
     const togPermEl = document.getElementById('t-perm');
     p.pivotPanel = {
@@ -284,6 +295,7 @@ const Projects = {
       if (p.inputsCollapsed) inputsArea.classList.add('collapsed');
       else inputsArea.classList.remove('collapsed');
     }
+    state.resultsCollapsed = !!p.resultsCollapsed;
 
     // Pivot panel toggles. Missing fields fall back to the same defaults
     // _afterProjectSwitch used to set explicitly.
@@ -316,6 +328,15 @@ const Projects = {
     const pp = p.plotPanel || {};
     plotState.visible = !!pp.visible;
     plotState.type = pp.type === 'cross' ? 'cross' : 'hist';
+    // Sync the pt-cross / pt-hist radios. _refreshPlotPanelImpl reads back
+    // from the radios on every refresh, so without this the next refresh
+    // would clobber a restored 'cross' selection back to 'hist'.
+    const ptCrossEl = document.getElementById('pt-cross');
+    const ptHistEl = document.getElementById('pt-hist');
+    if (ptCrossEl && ptHistEl) {
+      ptCrossEl.checked = plotState.type === 'cross';
+      ptHistEl.checked = plotState.type !== 'cross';
+    }
     plotState.filters.wells  = new Set((pp.filters && pp.filters.wells)  || []);
     plotState.filters.zones  = new Set((pp.filters && pp.filters.zones)  || []);
     plotState.filters.facies = new Set((pp.filters && pp.filters.facies) || []);
@@ -462,6 +483,7 @@ const Projects = {
         porosityTouched: false, permeabilityTouched: false,
       },
       inputsCollapsed: false,
+      resultsCollapsed: false,
     };
   },
   _newId() {

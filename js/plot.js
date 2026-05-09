@@ -256,14 +256,20 @@ function _refreshPlotPanelImpl() {
   // Show/hide options blocks
   document.getElementById('plot-options-hist').style.display = plotState.type === 'hist' ? '' : 'none';
   document.getElementById('plot-options-cross').style.display = plotState.type === 'cross' ? '' : 'none';
-  // The active-regression detail strip lives below the plot canvas. It only
-  // belongs to cross-plot mode, so toggle visibility on type change.
+  // The detail strip is a cross-plot affordance. Toggle the .open class here
+  // (cheap; just CSS) — full rebuilds happen via rebuildRegActiveDetail when
+  // the active reg actually changes, so we don't steal focus from coefficient
+  // inputs the user might be typing into.
   const regBox = document.getElementById('reg-active-detail');
   if (regBox) {
     const showDetail = plotState.type === 'cross'
       && regState.activeId !== null
       && regState.list.some(r => r.id === regState.activeId);
-    regBox.style.display = showDetail ? '' : 'none';
+    regBox.classList.toggle('open', showDetail);
+    // If we just opened the strip but it has no content (e.g., the user
+    // toggled into cross-plot for the first time after activating a reg in
+    // hist mode), populate it now.
+    if (showDetail && !regBox.firstChild) rebuildRegActiveDetail();
   }
 
   const pts = filteredPoints();
@@ -549,9 +555,14 @@ function renderHistogram(points) {
 // ============================================================
 // Color / shape picker popovers (legend customization)
 // ============================================================
+// Preset palette uses dark, saturated hexes for both fill and outline. Fill is
+// rendered with low alpha (≈0.5) inside makeShape, so points still read as
+// soft pastels but overlapping markers blend additively — much better than
+// separate light/dark variants when points crowd together.
 const CUSTOM_PRESET_COLORS = [
-  '#fb877a', '#ffa571', '#f7cb66', '#feea66', '#dbe666', '#aed879', '#7ce2b0',
-  '#66d9e5', '#66c3eb', '#66aae1', '#a49cdd', '#bca1e1', '#dd7bd0', '#ee6690',
+  '#463C39', '#BA2A19', '#BF4F0E', '#B57E00', '#BEA500',
+  '#93A000', '#5A8E18', '#1C9C5D', '#00909F', '#0075A6',
+  '#00559A', '#4E4495', '#6C4A99', '#951B84', '#AB0034',
 ];
 
 let _activePicker = null;
@@ -708,6 +719,13 @@ function renderCrossPlot(points) {
   canvas.innerHTML = '';
   const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, width: '100%' }, canvas);
 
+  // Drop-shadow filter for plotted data (points + regression curves). Defined
+  // once and applied to a single <g>, so the GPU composites the shadow per
+  // group rather than per element — keeps a few thousand points cheap.
+  const defs = svgEl('defs', null, svg);
+  const filt = svgEl('filter', { id: 'point-shadow', x: '-20%', y: '-20%', width: '140%', height: '140%' }, defs);
+  svgEl('feDropShadow', { dx: 0, dy: 0.8, stdDeviation: 0.7, 'flood-color': '#3a3528', 'flood-opacity': 0.35 }, filt);
+
   const xScale = (v) => M.left + (v - xLo) / (xHi - xLo) * iw;
   const yScale = (v) => M.top + ih - (Math.log10(v) - Math.log10(yLo)) / (Math.log10(yHi) - Math.log10(yLo)) * ih;
 
@@ -747,12 +765,16 @@ function renderCrossPlot(points) {
   const yLab = svgEl('text', { x: 16, y: M.top + ih / 2, 'text-anchor': 'middle', transform: 'rotate(-90 16 ' + (M.top + ih / 2) + ')', 'font-size': '11', 'font-family': 'IBM Plex Sans, sans-serif', fill: '#3a3528', 'font-weight': '500' }, svg);
   yLab.textContent = 'Permeability (mD, log)';
 
+  // Points + regression curves go in a single shadowed group so the drop-
+  // shadow filter cost is paid once per frame, not once per element.
+  const dataGroup = svgEl('g', { filter: 'url(#point-shadow)' }, svg);
+
   // Points
   for (const p of valid) {
     const x = xScale(p.por), y = yScale(p.perm);
     const color = colorMap.get(p[colorBy]) || '#999';
     const shapeIdx = shapeBy ? (shapeMap.get(p[shapeBy]) || 0) : 0;
-    svg.appendChild(makeShape(shapeIdx, x, y, color, 0.55));
+    dataGroup.appendChild(makeShape(shapeIdx, x, y, color, 0.45));
   }
 
   // Regression curves -- one polyline per visible regression, sampled across the plot's X range.
@@ -781,7 +803,7 @@ function renderCrossPlot(points) {
       svgEl('path', {
         d, fill: 'none', stroke: reg.color, 'stroke-width': 2,
         'stroke-opacity': reg.id === regState.activeId ? 0.95 : 0.75,
-      }, svg);
+      }, dataGroup);
     }
     // Subtle marker showing the data range used for the fit, drawn as ticks at the fit endpoints
     const px1 = xScale(reg.range.phiLo), px2 = xScale(reg.range.phiHi);
@@ -791,7 +813,7 @@ function renderCrossPlot(points) {
       // Tiny end-caps inside the data range -- visual cue for "fit was based on this stretch"
       for (const px of [px1, px2]) {
         if (px >= M.left && px <= M.left + iw) {
-          svgEl('line', { x1: px, x2: px, y1: M.top + ih - 4, y2: M.top + ih, stroke: reg.color, 'stroke-width': 1.3 }, svg);
+          svgEl('line', { x1: px, x2: px, y1: M.top + ih - 4, y2: M.top + ih, stroke: reg.color, 'stroke-width': 1.3 }, dataGroup);
         }
       }
     }
@@ -825,10 +847,17 @@ function renderCrossPlot(points) {
   for (const k of colorKeys) {
     const item = document.createElement('span');
     item.className = 'plot-legend-item' + (isHidden(colorDim, k) ? ' hidden' : '');
+    // Render the swatch as a tiny SVG circle via the same makeShape used for
+    // plot points, so the legend visually matches what's drawn (transparent
+    // fill + darker outline) instead of being a flat solid block.
     const sw = document.createElement('span');
     sw.className = 'plot-legend-swatch plot-legend-swatch-clickable';
-    sw.style.background = colorMap.get(k);
     sw.title = 'Pick color';
+    const swSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    swSvg.setAttribute('viewBox', '-7 -7 14 14');
+    swSvg.setAttribute('width', '14'); swSvg.setAttribute('height', '14');
+    swSvg.appendChild(makeShape(0, 0, 0, colorMap.get(k), 0.45));
+    sw.appendChild(swSvg);
     sw.addEventListener('click', (e) => {
       e.stopPropagation();
       if (!colorDim) return;
@@ -928,7 +957,6 @@ function renderCrossPlot(points) {
       head.appendChild(sw);
       const name = document.createElement('span');
       name.className = 'plot-legend-reg-name';
-      if (reg.id === regState.activeId) name.classList.add('active');
       name.title = 'Toggle visibility on plot';
       name.textContent = reg.name + '  (n=' + reg.n + ', R²=' + reg.r2.toFixed(3) + ')';
       name.addEventListener('click', () => regToggleVisibility(reg.id));
