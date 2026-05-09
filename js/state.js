@@ -91,3 +91,79 @@ function hydrateFaciesLabelsFromStorage() {
     }
   }
 }
+
+// ============================================================
+// Custom per-element style overrides (cross-plot)
+// ============================================================
+// Saved globally (not per-project) so a user-chosen color for "Facies F1" or
+// shape for "Well NO 15/3-1" carries across projects. Keyed by
+// dimension ("facies" | "well" | "zone") then by value.
+const CUSTOM_STYLES_STORAGE_KEY = 'fzp_customStyles_v1';
+
+state.customStyles = { colors: {}, shapes: {} };
+
+function loadCustomStyles() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_STYLES_STORAGE_KEY);
+    if (!raw) return { colors: {}, shapes: {} };
+    const obj = JSON.parse(raw);
+    return {
+      colors: (obj && obj.colors && typeof obj.colors === 'object') ? obj.colors : {},
+      shapes: (obj && obj.shapes && typeof obj.shapes === 'object') ? obj.shapes : {},
+    };
+  } catch (e) {
+    return { colors: {}, shapes: {} };
+  }
+}
+
+function saveCustomStyles() {
+  try {
+    localStorage.setItem(CUSTOM_STYLES_STORAGE_KEY, JSON.stringify(state.customStyles));
+  } catch (e) {
+    // Storage may be full or disabled; fail silently
+  }
+}
+
+function hydrateCustomStylesFromStorage() {
+  state.customStyles = loadCustomStyles();
+}
+
+function customColorFor(dim, value) {
+  const m = state.customStyles.colors[dim];
+  return (m && m[value]) ? m[value] : null;
+}
+
+function customShapeFor(dim, value) {
+  const m = state.customStyles.shapes[dim];
+  return (m && m[value] != null) ? m[value] : null;
+}
+
+function setCustomColor(dim, value, hex) {
+  if (!state.customStyles.colors[dim]) state.customStyles.colors[dim] = {};
+  state.customStyles.colors[dim][value] = hex;
+  saveCustomStyles();
+}
+
+function clearCustomColor(dim, value) {
+  const m = state.customStyles.colors[dim];
+  if (!m) return;
+  delete m[value];
+  if (Object.keys(m).length === 0) delete state.customStyles.colors[dim];
+  saveCustomStyles();
+}
+
+function setCustomShape(dim, value, idx) {
+  if (!state.customStyles.shapes[dim]) state.customStyles.shapes[dim] = {};
+  state.customStyles.shapes[dim][value] = idx;
+  saveCustomStyles();
+}
+
+function clearCustomShape(dim, value) {
+  const m = state.customStyles.shapes[dim];
+  if (!m) return;
+  delete m[value];
+  if (Object.keys(m).length === 0) delete state.customStyles.shapes[dim];
+  saveCustomStyles();
+}
+
+hydrateCustomStylesFromStorage();

@@ -546,6 +546,118 @@ function renderHistogram(points) {
   }
 }
 
+// ============================================================
+// Color / shape picker popovers (legend customization)
+// ============================================================
+const CUSTOM_PRESET_COLORS = [
+  '#fb877a', '#ffa571', '#f7cb66', '#feea66', '#dbe666', '#aed879', '#7ce2b0',
+  '#66d9e5', '#66c3eb', '#66aae1', '#a49cdd', '#bca1e1', '#dd7bd0', '#ee6690',
+];
+
+let _activePicker = null;
+function _dismissPicker() {
+  if (!_activePicker) return;
+  _activePicker.remove();
+  document.removeEventListener('mousedown', _onPickerOutside, true);
+  document.removeEventListener('keydown', _onPickerKey, true);
+  _activePicker = null;
+}
+function _onPickerOutside(e) {
+  if (_activePicker && !_activePicker.contains(e.target)) _dismissPicker();
+}
+function _onPickerKey(e) {
+  if (e.key === 'Escape') _dismissPicker();
+}
+function _positionAndShowPicker(pop, anchor) {
+  pop.style.position = 'fixed';
+  pop.style.visibility = 'hidden';
+  pop.style.zIndex = '9999';
+  document.body.appendChild(pop);
+  const a = anchor.getBoundingClientRect();
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  let top = a.bottom + 4;
+  if (top + ph > window.innerHeight - 8) top = Math.max(8, a.top - ph - 4);
+  let left = a.left;
+  if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+  if (left < 8) left = 8;
+  pop.style.top = top + 'px';
+  pop.style.left = left + 'px';
+  pop.style.visibility = '';
+  _activePicker = pop;
+  // Defer outside-click listener so the opening click doesn't dismiss us
+  setTimeout(() => {
+    document.addEventListener('mousedown', _onPickerOutside, true);
+    document.addEventListener('keydown', _onPickerKey, true);
+  }, 0);
+}
+
+function showColorPicker(anchor, currentColor, onPick, onReset) {
+  _dismissPicker();
+  const pop = document.createElement('div');
+  pop.className = 'style-picker style-picker-color';
+  const grid = document.createElement('div');
+  grid.className = 'style-picker-grid style-picker-grid-color';
+  for (const hex of CUSTOM_PRESET_COLORS) {
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'style-picker-color-cell';
+    cell.style.background = hex;
+    cell.title = hex;
+    if (currentColor && String(currentColor).toLowerCase() === hex.toLowerCase()) cell.classList.add('active');
+    cell.addEventListener('click', () => { onPick(hex); _dismissPicker(); });
+    grid.appendChild(cell);
+  }
+  pop.appendChild(grid);
+  if (onReset) {
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'style-picker-reset';
+    reset.textContent = 'Reset to default';
+    reset.addEventListener('click', () => { onReset(); _dismissPicker(); });
+    pop.appendChild(reset);
+  }
+  _positionAndShowPicker(pop, anchor);
+}
+
+function showShapePicker(anchor, currentShape, onPick, onReset) {
+  _dismissPicker();
+  const pop = document.createElement('div');
+  pop.className = 'style-picker style-picker-shape';
+  const grid = document.createElement('div');
+  grid.className = 'style-picker-grid style-picker-grid-shape';
+  for (let i = 0; i < 6; i++) {
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'style-picker-shape-cell';
+    if (currentShape === i) cell.classList.add('active');
+    const mini = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    mini.setAttribute('viewBox', '-7 -7 14 14');
+    mini.setAttribute('width', '18'); mini.setAttribute('height', '18');
+    mini.appendChild(makeShape(i, 0, 0, '#3a3528', 0.85));
+    cell.appendChild(mini);
+    cell.addEventListener('click', () => { onPick(i); _dismissPicker(); });
+    grid.appendChild(cell);
+  }
+  pop.appendChild(grid);
+  if (onReset) {
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'style-picker-reset';
+    reset.textContent = 'Reset to default';
+    reset.addEventListener('click', () => { onReset(); _dismissPicker(); });
+    pop.appendChild(reset);
+  }
+  _positionAndShowPicker(pop, anchor);
+}
+
+// Maps a "color by"/"shape by" select value to the matching plotState.filters key.
+function filterDimFor(by) {
+  if (by === 'well') return 'wells';
+  if (by === 'zone') return 'zones';
+  if (by === 'facies') return 'facies';
+  return null;
+}
+
 function renderCrossPlot(points) {
   const colorBy = document.getElementById('cross-color').value;
   const shapeBy = document.getElementById('cross-shape').value;
@@ -562,14 +674,29 @@ function renderCrossPlot(points) {
   yLo = Math.pow(10, Math.log10(yLo) - 0.15);
   yHi = Math.pow(10, Math.log10(yHi) + 0.15);
 
-  // Categorical color/shape mappings
-  const colorKeys = uniqueValues(valid, colorBy);
-  const colorMap = new Map(colorKeys.map((k, i) => [k, PLOT_COLORS[i % PLOT_COLORS.length]]));
+  // Categorical color/shape mappings.
+  //
+  // Compute keys from the *unfiltered* well/zone/facies universe (lastPorPoints)
+  // so the legend can show every category that exists in the data — including
+  // ones currently filtered out. That keeps the title-toggle behavior
+  // bidirectional: clicking a hidden entry in the legend can re-show it.
+  // Custom colors/shapes from state.customStyles override the rotation defaults.
+  const colorDim = filterDimFor(colorBy);
+  const shapeDim = filterDimFor(shapeBy);
+  const allValid = lastPorPoints.filter(p => p.por != null && isFinite(p.por) && p.perm != null && isFinite(p.perm) && p.perm > 0);
+  const colorKeys = uniqueValues(allValid, colorBy);
+  const colorMap = new Map(colorKeys.map((k, i) => {
+    const custom = colorDim ? customColorFor(colorDim, k) : null;
+    return [k, custom || PLOT_COLORS[i % PLOT_COLORS.length]];
+  }));
   let shapeKeys = [];
   let shapeMap = new Map();
   if (shapeBy) {
-    shapeKeys = uniqueValues(valid, shapeBy);
-    shapeMap = new Map(shapeKeys.map((k, i) => [k, i % 6]));
+    shapeKeys = uniqueValues(allValid, shapeBy);
+    shapeMap = new Map(shapeKeys.map((k, i) => {
+      const custom = shapeDim ? customShapeFor(shapeDim, k) : null;
+      return [k, custom != null ? custom : (i % 6)];
+    }));
   }
 
   // Layout
@@ -670,20 +797,51 @@ function renderCrossPlot(points) {
     }
   }
 
-  // Legend: color first, then shape (if used)
+  // Legend: color first, then shape (if used).
+  //
+  // Interaction model:
+  //  - Click swatch / shape icon  → opens a color or shape picker popover.
+  //    Custom selections are persisted globally (state.customStyles) so they
+  //    follow the same value across projects (like facies labels).
+  //  - Click label                 → toggles the underlying filter chip for
+  //    that value. Hidden entries stay in the legend (dimmed) so the toggle
+  //    can be reversed without leaving the legend.
   const legend = document.getElementById('plot-legend');
   function colorLabel(k) {
     if (colorBy === 'facies' && lastLabels && lastLabels.get(k)) return lastLabels.get(k) + ' (F' + k + ')';
     return String(k);
   }
+  function isHidden(dim, key) {
+    return dim ? !plotState.filters[dim].has(key) : false;
+  }
+  function toggleVisibility(dim, key) {
+    if (!dim) return;
+    const set = plotState.filters[dim];
+    if (set.has(key)) set.delete(key); else set.add(key);
+    syncFilterChipsToState();
+    refreshPlotPanel();
+    Projects.saveDebounced();
+  }
   for (const k of colorKeys) {
     const item = document.createElement('span');
-    item.className = 'plot-legend-item';
+    item.className = 'plot-legend-item' + (isHidden(colorDim, k) ? ' hidden' : '');
     const sw = document.createElement('span');
-    sw.className = 'plot-legend-swatch';
+    sw.className = 'plot-legend-swatch plot-legend-swatch-clickable';
     sw.style.background = colorMap.get(k);
+    sw.title = 'Pick color';
+    sw.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!colorDim) return;
+      showColorPicker(sw, colorMap.get(k),
+        (hex) => { setCustomColor(colorDim, k, hex); refreshPlotPanel(); },
+        () => { clearCustomColor(colorDim, k); refreshPlotPanel(); }
+      );
+    });
     const txt = document.createElement('span');
+    txt.className = 'plot-legend-label';
+    txt.title = 'Toggle visibility';
     txt.textContent = colorLabel(k);
+    txt.addEventListener('click', () => toggleVisibility(colorDim, k));
     item.appendChild(sw); item.appendChild(txt);
     legend.appendChild(item);
   }
@@ -699,48 +857,89 @@ function renderCrossPlot(points) {
     }
     for (const k of shapeKeys) {
       const item = document.createElement('span');
-      item.className = 'plot-legend-item plot-legend-shape';
+      item.className = 'plot-legend-item plot-legend-shape' + (isHidden(shapeDim, k) ? ' hidden' : '');
       const wrap = document.createElement('span');
+      wrap.className = 'plot-legend-shape-icon';
+      wrap.title = 'Pick shape';
       const mini = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       mini.setAttribute('viewBox', '-7 -7 14 14');
       mini.setAttribute('width', '14'); mini.setAttribute('height', '14');
       mini.appendChild(makeShape(shapeMap.get(k) || 0, 0, 0, '#3a3528', 0.85));
       wrap.appendChild(mini);
+      wrap.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!shapeDim) return;
+        showShapePicker(wrap, shapeMap.get(k),
+          (idx) => { setCustomShape(shapeDim, k, idx); refreshPlotPanel(); },
+          () => { clearCustomShape(shapeDim, k); refreshPlotPanel(); }
+        );
+      });
       const txt = document.createElement('span');
+      txt.className = 'plot-legend-label';
+      txt.title = 'Toggle visibility';
       txt.textContent = shapeLabel(k);
+      txt.addEventListener('click', () => toggleVisibility(shapeDim, k));
       item.appendChild(wrap); item.appendChild(txt);
       legend.appendChild(item);
     }
   }
 
   // Regression legend entries: name on top, equation below (monospaced).
-  // Only include visible regressions; clicking a name in the legend activates it.
-  if (visibleRegs.length > 0) {
+  // Show every regression (hidden ones dimmed) so the title-toggle stays
+  // bidirectional. Clicking the line stripe opens the color picker; clicking
+  // the title toggles plot visibility. Activation lives on the sidebar pills.
+  if (regState.list.length > 0) {
     if (colorKeys.length > 0 || shapeBy) {
       const sep = document.createElement('div');
       sep.style.cssText = 'flex-basis:100%;height:0;';
       legend.appendChild(sep);
     }
-    for (const reg of visibleRegs) {
+    for (const reg of regState.list) {
       const item = document.createElement('div');
-      item.style.cssText = 'flex-basis:100%; display:flex; flex-direction:column; gap:1px; padding:3px 0; cursor:pointer;';
-      item.title = 'Click to activate';
-      item.addEventListener('click', () => regSetActive(reg.id));
+      item.className = 'plot-legend-reg' + (reg.visible ? '' : ' hidden');
 
       const head = document.createElement('div');
-      head.style.cssText = 'display:flex; align-items:center; gap:6px;';
+      head.className = 'plot-legend-reg-head';
       const sw = document.createElement('span');
-      sw.style.cssText = 'width:18px; height:3px; background:' + reg.color + '; border-radius:1px;';
+      sw.className = 'plot-legend-reg-swatch';
+      sw.style.background = reg.color;
+      sw.title = 'Pick color';
+      sw.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showColorPicker(sw, reg.color,
+          (hex) => {
+            reg.color = hex;
+            rebuildRegList();
+            refreshPlotPanel();
+            Projects.saveDebounced();
+          },
+          () => {
+            // Reset to next available REG_COLORS slot
+            const used = new Set(regState.list.filter(r => r.id !== reg.id).map(r => r.color));
+            let next = REG_COLORS[0];
+            for (const c of REG_COLORS) if (!used.has(c)) { next = c; break; }
+            reg.color = next;
+            rebuildRegList();
+            refreshPlotPanel();
+            Projects.saveDebounced();
+          }
+        );
+      });
       head.appendChild(sw);
       const name = document.createElement('span');
-      name.style.cssText = 'font-weight:600;' + (reg.id === regState.activeId ? ' text-decoration:underline; text-decoration-thickness:1.5px; text-underline-offset:3px;' : '');
+      name.className = 'plot-legend-reg-name';
+      if (reg.id === regState.activeId) name.classList.add('active');
+      name.title = 'Toggle visibility on plot';
       name.textContent = reg.name + '  (n=' + reg.n + ', R²=' + reg.r2.toFixed(3) + ')';
+      name.addEventListener('click', () => regToggleVisibility(reg.id));
       head.appendChild(name);
       item.appendChild(head);
 
       const eq = document.createElement('div');
-      eq.style.cssText = 'font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--ink); padding-left: 24px;';
+      eq.className = 'plot-legend-reg-eq';
+      eq.title = 'Toggle visibility on plot';
       eq.textContent = petrelFormula(reg.coeffs);
+      eq.addEventListener('click', () => regToggleVisibility(reg.id));
       item.appendChild(eq);
 
       legend.appendChild(item);
