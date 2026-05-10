@@ -752,6 +752,45 @@ function exportPlotPng(canvasId, filename, scale) {
 function exportCrossPlotSvg() { exportPlotSvg('plot-canvas', 'cross-plot.svg'); }
 function exportCrossPlotPng(scale) { exportPlotPng('plot-canvas', 'cross-plot.png', scale); }
 
+// ============================================================
+// Cross-plot point tooltip (same shape/CSS as the SHF tooltip)
+// ============================================================
+let _crossTooltipEl = null;
+function _ensureCrossTooltipEl() {
+  if (_crossTooltipEl && _crossTooltipEl.isConnected) return _crossTooltipEl;
+  const canvas = document.getElementById('plot-canvas');
+  const wrap = canvas && canvas.parentElement;
+  if (!wrap) return null;
+  if (getComputedStyle(wrap).position === 'static') wrap.style.position = 'relative';
+  _crossTooltipEl = document.createElement('div');
+  _crossTooltipEl.className = 'shf-tooltip';
+  wrap.appendChild(_crossTooltipEl);
+  return _crossTooltipEl;
+}
+function _crossTooltipHtml(p) {
+  const num = (v, d) => (v == null || !isFinite(v)) ? '—' : Number(v).toFixed(d);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  const rqi = (p.por != null && p.perm != null && p.por > 0)
+    ? Math.sqrt(p.perm / p.por) : null;
+  const rows = [
+    ['Zone',   p.zone == null ? '—' : esc(p.zone)],
+    ['Facies', p.facies == null ? '—' : esc('F' + p.facies)],
+    ['MD',     num(p.md, 3)],
+    ['TVDSS',  num(p.tvdss, 2)],
+    ['HAFWL',  num(p.hafwl, 2)],
+    ['Sw',     num(p.sw, 4)],
+    ['φ',      num(p.por, 4)],
+    ['k',      num(p.perm, 3)],
+    ['√(k/φ)', num(rqi, 3)],
+  ];
+  let body = '';
+  for (const [k, v] of rows) {
+    body += '<span class="tt-k">' + esc(k) + '</span><span class="tt-v">' + v + '</span>';
+  }
+  return '<div class="tt-name">' + esc(p.well || '—') + '</div>'
+       + '<div class="tt-grid">' + body + '</div>';
+}
+
 // Maps a "color by"/"shape by" select value to the matching plotState.filters key.
 function filterDimFor(by) {
   if (by === 'well') return 'wells';
@@ -808,6 +847,9 @@ function renderCrossPlot(points) {
 
   const canvas = document.getElementById('plot-canvas');
   canvas.innerHTML = '';
+  // Stale tooltip from a previous render won't get a mouseleave when its
+  // shape is removed — hide eagerly so it doesn't hang over the new plot.
+  if (_crossTooltipEl) _crossTooltipEl.style.display = 'none';
   const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, width: '100%' }, canvas);
 
   // Drop-shadow filter for plotted data (points + regression curves). Defined
@@ -860,12 +902,28 @@ function renderCrossPlot(points) {
   // shadow filter cost is paid once per frame, not once per element.
   const dataGroup = svgEl('g', { filter: 'url(#point-shadow)' }, svg);
 
-  // Points
+  // Hover tooltip — same CSS as the SHF tooltip; pinned to the canvas wrap.
+  const tip = _ensureCrossTooltipEl();
   for (const p of valid) {
     const x = xScale(p.por), y = yScale(p.perm);
     const color = colorMap.get(p[colorBy]) || '#999';
     const shapeIdx = shapeBy ? (shapeMap.get(p[shapeBy]) || 0) : 0;
-    dataGroup.appendChild(makeShape(shapeIdx, x, y, color, 0.45));
+    const sh = makeShape(shapeIdx, x, y, color, 0.45);
+    if (tip) {
+      sh.style.cursor = 'crosshair';
+      sh.addEventListener('mouseenter', () => {
+        tip.innerHTML = _crossTooltipHtml(p);
+        tip.style.display = 'block';
+      });
+      sh.addEventListener('mousemove', (ev) => {
+        const wrap = tip.parentElement;
+        const r = wrap.getBoundingClientRect();
+        tip.style.left = (ev.clientX - r.left) + 'px';
+        tip.style.top  = (ev.clientY - r.top) + 'px';
+      });
+      sh.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+    }
+    dataGroup.appendChild(sh);
   }
 
   // Regression curves -- one polyline per visible regression, sampled across the plot's X range.

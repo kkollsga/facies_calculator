@@ -266,12 +266,21 @@ function _clampToRange(v, key) {
 // Always async; the linearised + coord-descent paths resolve immediately,
 // MCMC yields to the event loop periodically so the UI stays responsive.
 async function _shfMlFit(points, startParams, method) {
+  // Yield once before any algo runs so the browser can paint the
+  // "Fitting…" button state and disable cue before the heavy work starts.
+  await _shfYield();
   const algo = shfState.fitAlgo === 'mcmc'  ? 'mcmc'
              : shfState.fitAlgo === 'coord' ? 'coord'
              : 'linear';
   if (algo === 'mcmc')  return await _shfMlFitMcmc(points, startParams, method);
-  if (algo === 'coord') return _shfMlFitCoord(points, startParams, method);
+  if (algo === 'coord') return await _shfMlFitCoord(points, startParams, method);
   return _shfMlFitLinear(points, startParams, method);
+}
+
+// Yield to the event loop so the UI can paint. Used between candidates of
+// the coord-descent multistart so a long fit doesn't freeze the browser.
+function _shfYield() {
+  return new Promise(resolve => setTimeout(resolve, 0));
 }
 
 // Linearised 2-stage solve, then a short coordinate-descent refinement.
@@ -442,7 +451,7 @@ function _shfCoordRefine(points, params, method, free, maxPasses, goldTol, break
 // current params, refine each, and keep the best. Deterministic
 // linearised init is a non-starter here (this algo's whole point is
 // to skip the linearisation).
-function _shfMlFitCoord(points, startParams, method) {
+async function _shfMlFitCoord(points, startParams, method) {
   if (!points || points.length < 5) return null;
   const free = method === 'perm' ? SHF_FREE_PARAMS_PERM : SHF_FREE_PARAMS_RQI;
   function refineFrom(seed) {
@@ -464,10 +473,14 @@ function _shfMlFitCoord(points, startParams, method) {
   }
   // First candidate is the user's current params (warm-start). Five
   // random restarts on top so we get a fair shot at the global optimum
-  // without explosive cost — each restart is ~80 passes × 4 params ×
-  // golden-section ≈ a few thousand SSE evaluations, sub-100ms total.
+  // without explosive cost. Yielding between candidates lets the browser
+  // repaint — the total fit work is the same, but the page stays
+  // responsive instead of hanging until done.
   const candidates = [refineFrom(startParams)];
-  for (let i = 0; i < 5; i++) candidates.push(refineFrom(randomSeed()));
+  for (let i = 0; i < 5; i++) {
+    await _shfYield();
+    candidates.push(refineFrom(randomSeed()));
+  }
   let best = candidates[0];
   for (const c of candidates) if (c.sse < best.sse) best = c;
   const quality = _shfRSquared(points, best.params, method);
@@ -991,11 +1004,12 @@ async function shfFnMlFit(id) {
   _shfMlFitInFlight = true;
   const pts = _shfFnPointsForFit(fn);
 
-  const isMcmc = shfState.fitAlgo === 'mcmc';
   const fitBtn = document.querySelector('.shf-fn-fit-row .plot-reg-btn');
   if (fitBtn) {
     fitBtn.disabled = true;
-    if (isMcmc) fitBtn.textContent = 'Fitting…';
+    // All algorithms now yield to the event loop, so showing "Fitting…" is
+    // meaningful for every path (not only MCMC).
+    fitBtn.textContent = 'Fitting…';
   }
   // Snapshot the user's current params so we can roll back if the run
   // returns NaN — protects later renders / fits from a corrupted chain.
