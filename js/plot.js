@@ -900,18 +900,6 @@ function renderCrossPlot(points) {
         'stroke-opacity': reg.id === regState.activeId ? 0.95 : 0.75,
       }, dataGroup);
     }
-    // Subtle marker showing the data range used for the fit, drawn as ticks at the fit endpoints
-    const px1 = xScale(reg.range.phiLo), px2 = xScale(reg.range.phiHi);
-    const yMid = polyEval(reg.coeffs, (reg.range.phiLo + reg.range.phiHi) / 2);
-    const py = yScale(Math.pow(10, yMid));
-    if (isFinite(py) && py >= M.top && py <= M.top + ih) {
-      // Tiny end-caps inside the data range -- visual cue for "fit was based on this stretch"
-      for (const px of [px1, px2]) {
-        if (px >= M.left && px <= M.left + iw) {
-          svgEl('line', { x1: px, x2: px, y1: M.top + ih - 4, y2: M.top + ih, stroke: reg.color, 'stroke-width': 1.3 }, dataGroup);
-        }
-      }
-    }
   }
 
   // Color + shape legend now lives INSIDE the plot SVG below the x-axis

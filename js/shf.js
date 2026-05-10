@@ -1828,6 +1828,14 @@ function _renderShfPlot(points) {
   if (_shfTooltipEl) _shfTooltipEl.style.display = 'none';
   const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, width: '100%' }, canvas);
 
+  // Subtle drop-shadow applied once at the group level — cheaper than per-
+  // element filters and keeps points + curves visually consistent with the
+  // cross-plot. Hit paths (stroke: transparent) inside the group don't
+  // contribute visible shadow.
+  const defs = svgEl('defs', null, svg);
+  const filt = svgEl('filter', { id: 'shf-shadow', x: '-20%', y: '-20%', width: '140%', height: '140%' }, defs);
+  svgEl('feDropShadow', { dx: 0, dy: 0.8, stdDeviation: 0.7, 'flood-color': '#3a3528', 'flood-opacity': 0.35 }, filt);
+
   const xScale = v => M.left + (v - xLo) / (xHi - xLo) * iw;
   const yScale = v => M.top + ih - (v - yLo) / (yHi - yLo) * ih;
 
@@ -1858,6 +1866,11 @@ function _renderShfPlot(points) {
   const yLab = svgEl('text', { x: 16, y: M.top + ih / 2, 'text-anchor': 'middle', transform: 'rotate(-90 16 ' + (M.top + ih / 2) + ')', 'font-size': '11', 'font-family': 'IBM Plex Sans, sans-serif', fill: '#3a3528', 'font-weight': '500' }, svg);
   yLab.textContent = 'HAFWL';
 
+  // Points + curves go in a single shadowed group. Match the cross-plot
+  // styling: solid outline + semi-transparent fill so overlapping markers
+  // blend additively.
+  const dataGroup = svgEl('g', { filter: 'url(#shf-shadow)' }, svg);
+
   // Points. Hover tooltip is a custom HTML overlay (not native SVG <title>)
   // because native tooltips collapse newlines in Chrome/Safari, are slow to
   // appear, and look like OS chrome. The overlay is created once per render
@@ -1871,9 +1884,9 @@ function _renderShfPlot(points) {
     const color = _rainbowColor(t);
     const c = svgEl('circle', {
       cx: x, cy: y, r: 3.4,
-      fill: color, 'fill-opacity': 0.78,
-      stroke: color, 'stroke-opacity': 0.95, 'stroke-width': 0.6,
-    }, svg);
+      fill: color, 'fill-opacity': 0.45,
+      stroke: color, 'stroke-opacity': 1, 'stroke-width': 0.9,
+    }, dataGroup);
     c.addEventListener('mouseenter', () => {
       tip.innerHTML = _shfTooltipHtml(p);
       tip.style.display = 'block';
@@ -1929,18 +1942,18 @@ function _renderShfPlot(points) {
         samples.push({ x, y, h, sw });
       }
       if (!started) continue;
-      // Subtle drop-shadow via the CSS filter pipeline (modern browsers
-      // apply it on SVG elements). Replaces the previous dark outline
-      // path which was too heavy and dirtied the rainbow colors.
+      // Curve path inside the shadowed dataGroup — group filter handles
+      // the drop-shadow, so no per-element style needed.
       svgEl('path', {
         d: dPath, fill: 'none',
         stroke: lineColor, 'stroke-width': 1.8,
         'stroke-linecap': 'round',
-        style: 'filter: drop-shadow(0 1px 1.2px rgba(0, 0, 0, 0.35));',
-      }, svg);
+      }, dataGroup);
       // Wide invisible hit-path so the user doesn't need pixel-perfect
       // hover. Mouse events fire on this; we look up the closest sample
-      // and populate the same tooltip overlay used for points.
+      // and populate the same tooltip overlay used for points. Stays
+      // outside dataGroup so the shadow filter doesn't try to render
+      // shadows for transparent strokes.
       const hit = svgEl('path', {
         d: dPath, fill: 'none',
         stroke: 'transparent', 'stroke-width': 12,
