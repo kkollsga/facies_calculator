@@ -412,6 +412,8 @@ document.getElementById('hist-layout').addEventListener('change', refreshPlotPan
 document.getElementById('hist-bins').addEventListener('input', refreshPlotPanel);
 document.getElementById('cross-color').addEventListener('change', refreshPlotPanel);
 document.getElementById('cross-shape').addEventListener('change', refreshPlotPanel);
+document.getElementById('export-svg-btn').addEventListener('click', () => exportCrossPlotSvg());
+document.getElementById('export-png-btn').addEventListener('click', () => exportCrossPlotPng(3));
 document.getElementById('reg-add-btn').addEventListener('click', () => {
   // Add always creates a new regression from the current filters using the current
   // Order/Name input values. After adding, that new regression becomes active.

@@ -661,6 +661,89 @@ function showShapePicker(anchor, currentShape, onPick, onReset) {
   _positionAndShowPicker(pop, anchor);
 }
 
+// ============================================================
+// Cross-plot export (SVG / PNG)
+// ============================================================
+// Both formats serialize the on-screen SVG. The SVG already contains the
+// in-plot regression legend at upper-left; the color/shape legend below the
+// canvas is HTML, so it isn't part of the export. The SVG height is grown
+// dynamically when the in-plot legend would otherwise be clipped, which
+// gives us "sufficient padding below" without a separate render path.
+
+function _serializeCrossPlotSvg() {
+  const svg = document.querySelector('#plot-canvas svg');
+  if (!svg) return null;
+  const clone = svg.cloneNode(true);
+  // Ensure namespaces are present on the standalone document.
+  if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  if (!clone.getAttribute('xmlns:xlink')) clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+  // Pin an explicit width/height so the file opens at a sensible size in
+  // viewers that ignore viewBox sizing.
+  const vb = svg.viewBox.baseVal;
+  if (vb && vb.width && vb.height) {
+    clone.setAttribute('width', vb.width);
+    clone.setAttribute('height', vb.height);
+  }
+  // Cosmetic background so the exported file isn't transparent — matters
+  // for the dropped-shadow filter which composites against the page bg.
+  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bg.setAttribute('x', '0'); bg.setAttribute('y', '0');
+  bg.setAttribute('width', String(vb.width));
+  bg.setAttribute('height', String(vb.height));
+  bg.setAttribute('fill', '#fdfaf3');
+  clone.insertBefore(bg, clone.firstChild);
+  return clone;
+}
+
+function _downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+function exportCrossPlotSvg() {
+  const clone = _serializeCrossPlotSvg();
+  if (!clone) return;
+  const xml = new XMLSerializer().serializeToString(clone);
+  const out = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml;
+  _downloadBlob(new Blob([out], { type: 'image/svg+xml;charset=utf-8' }), 'cross-plot.svg');
+}
+
+function exportCrossPlotPng(scale) {
+  const clone = _serializeCrossPlotSvg();
+  if (!clone) return;
+  const vb = clone.viewBox.baseVal;
+  const w = vb.width, h = vb.height;
+  const xml = new XMLSerializer().serializeToString(clone);
+  // Encode as data URL so SVG-with-foreignObject isn't rejected by the
+  // image's CORS-tainted-canvas check (none here, but blob URLs sometimes
+  // trip Safari).
+  const b64 = btoa(unescape(encodeURIComponent(xml)));
+  const dataUrl = 'data:image/svg+xml;base64,' + b64;
+  const img = new Image();
+  img.onload = () => {
+    const s = scale || 3;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(w * s);
+    canvas.height = Math.round(h * s);
+    const ctx = canvas.getContext('2d');
+    // Fill background so the PNG isn't transparent.
+    ctx.fillStyle = '#fdfaf3';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(s, 0, 0, s, 0, 0);
+    ctx.drawImage(img, 0, 0, w, h);
+    canvas.toBlob((blob) => {
+      if (blob) _downloadBlob(blob, 'cross-plot.png');
+    }, 'image/png');
+  };
+  img.onerror = (e) => {
+    console.error('PNG export failed to rasterize SVG', e);
+  };
+  img.src = dataUrl;
+}
+
 // Maps a "color by"/"shape by" select value to the matching plotState.filters key.
 function filterDimFor(by) {
   if (by === 'well') return 'wells';
@@ -913,29 +996,41 @@ function renderCrossPlot(points) {
     }
   }
 
-  // Regression legend entries: name on top, equation below (monospaced).
-  // Show every regression (hidden ones dimmed) so the title-toggle stays
-  // bidirectional. Clicking the line stripe opens the color picker; clicking
-  // the title toggles plot visibility. Activation lives on the sidebar pills.
+  // Regression legend now lives INSIDE the plot, anchored to the upper-left
+  // of the data area on a semi-transparent rounded card. Same interactions as
+  // before (stripe → color picker, name/eq → toggle visibility). Drawn after
+  // dataGroup so the legend sits above points and curves; placed outside
+  // dataGroup so the drop-shadow filter doesn't smear it.
   if (regState.list.length > 0) {
-    if (colorKeys.length > 0 || shapeBy) {
-      const sep = document.createElement('div');
-      sep.style.cssText = 'flex-basis:100%;height:0;';
-      legend.appendChild(sep);
-    }
-    for (const reg of regState.list) {
-      const item = document.createElement('div');
-      item.className = 'plot-legend-reg' + (reg.visible ? '' : ' hidden');
+    const lg = svgEl('g', { class: 'in-plot-reg-legend' }, svg);
+    const padX = 9, padY = 7;
+    const stripeW = 16, stripeH = 3;
+    const entryGap = 4;
+    const headFontSize = 10.5;
+    const eqFontSize = 9.5;
+    const legendX = M.left + 8;
+    const legendY = M.top + 8;
+    let yCursor = legendY + padY + headFontSize;  // first text baseline
+    const xText = legendX + padX + stripeW + 6;   // text x-start
 
-      const head = document.createElement('div');
-      head.className = 'plot-legend-reg-head';
-      const sw = document.createElement('span');
-      sw.className = 'plot-legend-reg-swatch';
-      sw.style.background = reg.color;
-      sw.title = 'Pick color';
-      sw.addEventListener('click', (e) => {
+    for (const reg of regState.list) {
+      const entryG = svgEl('g', {
+        class: 'in-plot-reg-entry',
+        opacity: reg.visible ? 1 : 0.35,
+      }, lg);
+
+      // Color stripe — clickable to open color picker
+      const stripe = svgEl('rect', {
+        x: legendX + padX,
+        y: yCursor - 7,
+        width: stripeW, height: stripeH,
+        fill: reg.color,
+        rx: 1,
+        cursor: 'pointer',
+      }, entryG);
+      stripe.addEventListener('click', (e) => {
         e.stopPropagation();
-        showColorPicker(sw, reg.color,
+        showColorPicker(stripe, reg.color,
           (hex) => {
             reg.color = hex;
             rebuildRegList();
@@ -943,7 +1038,6 @@ function renderCrossPlot(points) {
             Projects.saveDebounced();
           },
           () => {
-            // Reset to next available REG_COLORS slot
             const used = new Set(regState.list.filter(r => r.id !== reg.id).map(r => r.color));
             let next = REG_COLORS[0];
             for (const c of REG_COLORS) if (!used.has(c)) { next = c; break; }
@@ -954,23 +1048,62 @@ function renderCrossPlot(points) {
           }
         );
       });
-      head.appendChild(sw);
-      const name = document.createElement('span');
-      name.className = 'plot-legend-reg-name';
-      name.title = 'Toggle visibility on plot';
-      name.textContent = reg.name + '  (n=' + reg.n + ', R²=' + reg.r2.toFixed(3) + ')';
-      name.addEventListener('click', () => regToggleVisibility(reg.id));
-      head.appendChild(name);
-      item.appendChild(head);
 
-      const eq = document.createElement('div');
-      eq.className = 'plot-legend-reg-eq';
-      eq.title = 'Toggle visibility on plot';
-      eq.textContent = petrelFormula(reg.coeffs);
-      eq.addEventListener('click', () => regToggleVisibility(reg.id));
-      item.appendChild(eq);
+      // Name + n + R² — clickable to toggle visibility
+      const nameTxt = svgEl('text', {
+        x: xText, y: yCursor,
+        'font-size': headFontSize,
+        'font-family': 'IBM Plex Sans, sans-serif',
+        'font-weight': 600,
+        fill: '#3a3528',
+        cursor: 'pointer',
+      }, entryG);
+      nameTxt.textContent = reg.name + '  (n=' + reg.n + ', R²=' + reg.r2.toFixed(3) + ')';
+      nameTxt.addEventListener('click', () => regToggleVisibility(reg.id));
 
-      legend.appendChild(item);
+      // Petrel equation — also clickable to toggle visibility
+      const eqTxt = svgEl('text', {
+        x: xText, y: yCursor + 12,
+        'font-size': eqFontSize,
+        'font-family': 'IBM Plex Mono, monospace',
+        fill: '#3a3528',
+        cursor: 'pointer',
+      }, entryG);
+      eqTxt.textContent = petrelFormula(reg.coeffs);
+      eqTxt.addEventListener('click', () => regToggleVisibility(reg.id));
+
+      yCursor += headFontSize + 12 + entryGap;
+    }
+
+    // Measure and back-fill a translucent card behind the entries so the
+    // legend reads cleanly over data. Insert at index 0 of the group so it
+    // renders below the entries without affecting their hit testing.
+    let bbox;
+    try { bbox = lg.getBBox(); } catch (e) { bbox = null; }
+    if (bbox && bbox.width > 0) {
+      const bg = svgEl('rect', {
+        x: bbox.x - padX,
+        y: bbox.y - padY,
+        width: bbox.width + 2 * padX,
+        height: bbox.height + 2 * padY,
+        fill: 'rgba(255, 252, 245, 0.85)',
+        stroke: 'rgba(90, 81, 66, 0.35)',
+        'stroke-width': 0.6,
+        rx: 3,
+        // The card itself isn't interactive; let clicks pass through to any
+        // elements beneath. The stripe and text inside still capture events.
+        'pointer-events': 'none',
+      });
+      lg.insertBefore(bg, lg.firstChild);
+
+      // If the legend extends past the data area's bottom, grow the SVG so
+      // the export captures the whole thing instead of clipping it.
+      const legendBottom = bbox.y + bbox.height + padY;
+      const currentBottom = H;
+      if (legendBottom + 8 > currentBottom) {
+        const newH = legendBottom + 12;
+        svg.setAttribute('viewBox', '0 0 ' + W + ' ' + newH);
+      }
     }
   }
 }
