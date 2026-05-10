@@ -436,9 +436,30 @@ function rebuildRegActiveDetail() {
   box.classList.add('open');
   box.innerHTML = '';
 
-  // Stats strip: n, R², phi range, degree. The n / r² cells carry data-stat so
-  // a manual coefficient edit can patch them in place without a full rebuild
+  // Header strip with the regression name and color cue — stays at the top
+  // as a clear identifier of which regression is being edited.
+  const head = document.createElement('div');
+  head.className = 'reg-detail-head';
+  const sw = document.createElement('span');
+  sw.className = 'reg-detail-swatch';
+  sw.style.background = r.color;
+  head.appendChild(sw);
+  const headTxt = document.createElement('span');
+  headTxt.className = 'reg-detail-head-txt';
+  headTxt.textContent = r.name;
+  head.appendChild(headTxt);
+  box.appendChild(head);
+
+  // Equation row: Petrel formula on the left, stats (n / R² / φ range /
+  // degree) inline on the right. The n / r² cells carry data-stat so a
+  // manual coefficient edit can patch them in place without a full rebuild
   // (which would steal focus from the input the user is typing in).
+  const eqRow = document.createElement('div');
+  eqRow.className = 'reg-detail-eq-row';
+  const eq = document.createElement('div');
+  eq.className = 'reg-detail-eq';
+  eq.textContent = petrelFormula(r.coeffs);
+  eqRow.appendChild(eq);
   const stats = document.createElement('div');
   stats.className = 'reg-detail-stats';
   function statCell(label, value, key) {
@@ -458,28 +479,7 @@ function rebuildRegActiveDetail() {
   statCell('R²', r.r2.toFixed(4), 'r2');
   statCell('φ range', r.range.phiLo.toFixed(3) + '–' + r.range.phiHi.toFixed(3));
   statCell('degree', String(r.degree));
-  box.appendChild(stats);
-
-  // Equation row: Petrel formula on the left, regression name + swatch
-  // ("description") on the right — replaces the standalone header that used
-  // to live above the stats strip.
-  const eqRow = document.createElement('div');
-  eqRow.className = 'reg-detail-eq-row';
-  const eq = document.createElement('div');
-  eq.className = 'reg-detail-eq';
-  eq.textContent = petrelFormula(r.coeffs);
-  eqRow.appendChild(eq);
-  const head = document.createElement('div');
-  head.className = 'reg-detail-head';
-  const sw = document.createElement('span');
-  sw.className = 'reg-detail-swatch';
-  sw.style.background = r.color;
-  head.appendChild(sw);
-  const headTxt = document.createElement('span');
-  headTxt.className = 'reg-detail-head-txt';
-  headTxt.textContent = r.name;
-  head.appendChild(headTxt);
-  eqRow.appendChild(head);
+  eqRow.appendChild(stats);
   box.appendChild(eqRow);
 
   // Coefficients: short labels (Constant, PHIE, PHIE², …) instead of the
