@@ -330,7 +330,11 @@ document.getElementById('shf-toggle-btn').addEventListener('click', () => {
   if (shfState.visible) hideShfPanel(); else showShfPanel();
 });
 document.getElementById('shf-color').addEventListener('change', refreshShfPanel);
-document.getElementById('shf-max').addEventListener('input', refreshShfPanel);
+document.getElementById('shf-max').addEventListener('input', () => {
+  // Max-points is a "commit" event — re-pick the random sample.
+  shfInvalidateSampleCache();
+  refreshShfPanel();
+});
 document.getElementById('shf-max-hafwl').addEventListener('input', () => {
   refreshShfPanel();
   Projects.saveDebounced();

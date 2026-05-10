@@ -62,6 +62,11 @@ const shfState = {
   // Empty / null = fall back to data extremes.
   lineRangeLo: 1,
   lineRangeHi: 40,
+  // Stable random sample of the visible point set. Re-picked only on
+  // explicit "commit" events (panel show, max-points change, filter chip
+  // toggle, data reload) so dragging sliders that only affect layout
+  // doesn't shuffle which points are on screen.
+  _sampleCache: null,
 };
 
 // ============================================================
@@ -637,10 +642,19 @@ function _updateShfToggleUI() {
   if (lbl) lbl.textContent = shfState.visible ? 'Hide saturation-height' : 'Show saturation-height';
 }
 
+// Invalidate the cached random sample so the next refresh re-picks. Called
+// when the user *commits* a change that should produce a fresh draw — panel
+// open, max-points change, filter change, data reload — but NOT when they
+// drag a slider that only affects layout (line range, max HAFWL, color by).
+function shfInvalidateSampleCache() {
+  shfState._sampleCache = null;
+}
+
 function showShfPanel() {
   document.getElementById('shf-section').style.display = '';
   shfState.visible = true;
   _updateShfToggleUI();
+  shfInvalidateSampleCache();
   refreshShfPanel();
   Projects.saveDebounced();
 }
@@ -686,6 +700,9 @@ function initShfPanel() {
   const newFp = _shfCategoryFingerprint();
   if (newFp === _shfCategoryFp) return;
   _shfCategoryFp = newFp;
+  // Categorical structure changed → underlying data shifted; force a fresh
+  // sample on the next refresh.
+  shfInvalidateSampleCache();
 
   const wells  = uniqueValues(lastPorPoints, 'well');
   const zones  = uniqueValues(lastPorPoints, 'zone');
@@ -723,6 +740,7 @@ function _buildShfFilterChips(containerId, items, set, labelFn) {
     chip.addEventListener('click', () => {
       if (set.has(item)) set.delete(item); else set.add(item);
       chip.classList.toggle('active');
+      shfInvalidateSampleCache();
       refreshShfPanel();
       Projects.saveDebounced();
     });
@@ -1665,7 +1683,21 @@ function _refreshShfPanelImpl() {
   _updateShfEditorStats();
   const maxInput = document.getElementById('shf-max');
   const maxPts = Math.max(10, parseInt(maxInput.value) || 500);
-  const sampled = _stratifiedSample(pts, maxPts);
+  // Reuse the cached sample when it's still consistent with the current
+  // filter set — every cached point must still be in pts, and its size
+  // must match what we'd pick today. Slider drags hit this path so the
+  // dots on screen don't shuffle every frame.
+  let sampled = shfState._sampleCache;
+  let cacheValid = false;
+  if (sampled) {
+    const ptsSet = new Set(pts);
+    const expectedLen = Math.min(pts.length, maxPts);
+    cacheValid = sampled.length === expectedLen && sampled.every(p => ptsSet.has(p));
+  }
+  if (!cacheValid) {
+    sampled = _stratifiedSample(pts, maxPts);
+    shfState._sampleCache = sampled;
+  }
 
   const meta = document.getElementById('shf-meta');
   meta.textContent = sampled.length + ' / ' + pts.length + ' samples'
@@ -1770,29 +1802,28 @@ function _colorMetricLabel(mode) {
 
 function _renderShfPlot(points) {
   const colorBy = document.getElementById('shf-color').value;
-  const cvalsRaw = points.map(p => _colorMetric(p, colorBy));
-  // Color ramp is always log because both metrics (RQI, porosity) span
-  // orders of magnitude in well data. If any value is non-positive we
-  // fall back to linear so the ramp doesn't NaN.
-  const useLog = cvalsRaw.every(v => Number.isFinite(v) && v > 0);
-  const cvals = useLog ? cvalsRaw.map(Math.log) : cvalsRaw;
-  // p05–p95 percentile clip prevents a handful of error samples from
-  // compressing the ramp into a thin band; points beyond the bounds
-  // saturate at the ramp ends.
-  const sortedC = cvals.slice().sort((a, b) => a - b);
-  const cLo = _percentile(sortedC, 0.05);
-  const cHi = _percentile(sortedC, 0.95);
+  // Fixed color-metric ranges so the colorbar reads identically across
+  // datasets / filter changes / sliders. Values outside the range saturate
+  // at the ramp ends. All three metrics are log-scaled.
+  const SHF_COLOR_RANGE = {
+    rqi:  [1, 40],          // √(k/φ)
+    por:  [0.01, 0.40],     // porosity 1% .. 40%
+    perm: [0.01, 1000],     // permeability mD
+  };
+  const range = SHF_COLOR_RANGE[colorBy] || SHF_COLOR_RANGE.rqi;
+  const useLog = true;
+  const legendLo = range[0];
+  const legendHi = range[1];
+  const cLo = Math.log(legendLo);
+  const cHi = Math.log(legendHi);
   const cRange = (cHi - cLo) || 1;
-  // Legend reads in original units; color metric is mapped through the
-  // (possibly log) scale to find a point's t in [0, 1] for the rainbow.
-  const legendLo = useLog ? Math.exp(cLo) : cLo;
-  const legendHi = useLog ? Math.exp(cHi) : cHi;
-  // Helper: mapping an original-units color metric value into [0, 1] on
-  // the same ramp the points use. Reused for fit-curve coloring + tick
-  // markers on the color bar.
+  const cvals = points.map(p => {
+    const v = _colorMetric(p, colorBy);
+    return Number.isFinite(v) && v > 0 ? Math.log(v) : cLo;
+  });
   function colorTFromValue(v) {
     if (!Number.isFinite(v)) return 0;
-    const x = useLog ? (v > 0 ? Math.log(v) : cLo) : v;
+    const x = (v > 0) ? Math.log(v) : cLo;
     return Math.max(0, Math.min(1, (x - cLo) / cRange));
   }
 
@@ -2027,7 +2058,10 @@ function _shfPickReferencePoints(points, metric, n, lo, hi) {
   const out = [];
   const used = new Set();
   for (let i = 0; i < n; i++) {
-    const q = (n === 1) ? 1 : i / (n - 1);
+    // Use i/n (not i/(n-1)) so the N targets are at constant log-spacing
+    // starting at lo, without forcing the last target to land exactly at hi.
+    // For n=1 we still want a representative line — pick the middle.
+    const q = (n === 1) ? 0.5 : i / n;
     const target = Math.exp(lnLo + q * (lnHi - lnLo));
     let bestIdx = -1, bestD = Infinity;
     for (let j = 0; j < all.length; j++) {
