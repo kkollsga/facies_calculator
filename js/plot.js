@@ -674,16 +674,14 @@ function showShapePicker(anchor, currentShape, onPick, onReset) {
 }
 
 // ============================================================
-// Cross-plot export (SVG / PNG)
+// Plot export (SVG / PNG) — shared by cross-plot and SHF
 // ============================================================
-// Both formats serialize the on-screen SVG. The SVG already contains the
-// in-plot regression legend at upper-left; the color/shape legend below the
-// canvas is HTML, so it isn't part of the export. The SVG height is grown
-// dynamically when the in-plot legend would otherwise be clipped, which
-// gives us "sufficient padding below" without a separate render path.
+// Both formats serialize the on-screen SVG (which now contains all in-plot
+// legends). The SVG height is grown dynamically by the renderers when a
+// legend would otherwise be clipped, so the export already has padding.
 
-function _serializeCrossPlotSvg() {
-  const svg = document.querySelector('#plot-canvas svg');
+function _serializePlotSvg(canvasId) {
+  const svg = document.querySelector('#' + canvasId + ' svg');
   if (!svg) return null;
   const clone = svg.cloneNode(true);
   // Ensure namespaces are present on the standalone document.
@@ -697,7 +695,7 @@ function _serializeCrossPlotSvg() {
     clone.setAttribute('height', vb.height);
   }
   // Cosmetic background so the exported file isn't transparent — matters
-  // for the dropped-shadow filter which composites against the page bg.
+  // for the drop-shadow filter which composites against the page bg.
   const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
   bg.setAttribute('x', '0'); bg.setAttribute('y', '0');
   bg.setAttribute('width', String(vb.width));
@@ -715,23 +713,20 @@ function _downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-function exportCrossPlotSvg() {
-  const clone = _serializeCrossPlotSvg();
+function exportPlotSvg(canvasId, filename) {
+  const clone = _serializePlotSvg(canvasId);
   if (!clone) return;
   const xml = new XMLSerializer().serializeToString(clone);
   const out = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml;
-  _downloadBlob(new Blob([out], { type: 'image/svg+xml;charset=utf-8' }), 'cross-plot.svg');
+  _downloadBlob(new Blob([out], { type: 'image/svg+xml;charset=utf-8' }), filename);
 }
 
-function exportCrossPlotPng(scale) {
-  const clone = _serializeCrossPlotSvg();
+function exportPlotPng(canvasId, filename, scale) {
+  const clone = _serializePlotSvg(canvasId);
   if (!clone) return;
   const vb = clone.viewBox.baseVal;
   const w = vb.width, h = vb.height;
   const xml = new XMLSerializer().serializeToString(clone);
-  // Encode as data URL so SVG-with-foreignObject isn't rejected by the
-  // image's CORS-tainted-canvas check (none here, but blob URLs sometimes
-  // trip Safari).
   const b64 = btoa(unescape(encodeURIComponent(xml)));
   const dataUrl = 'data:image/svg+xml;base64,' + b64;
   const img = new Image();
@@ -741,20 +736,21 @@ function exportCrossPlotPng(scale) {
     canvas.width = Math.round(w * s);
     canvas.height = Math.round(h * s);
     const ctx = canvas.getContext('2d');
-    // Fill background so the PNG isn't transparent.
     ctx.fillStyle = '#fdfaf3';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(s, 0, 0, s, 0, 0);
     ctx.drawImage(img, 0, 0, w, h);
     canvas.toBlob((blob) => {
-      if (blob) _downloadBlob(blob, 'cross-plot.png');
+      if (blob) _downloadBlob(blob, filename);
     }, 'image/png');
   };
-  img.onerror = (e) => {
-    console.error('PNG export failed to rasterize SVG', e);
-  };
+  img.onerror = (e) => { console.error('PNG export failed to rasterize SVG', e); };
   img.src = dataUrl;
 }
+
+// Back-compat thin wrappers used by app.js for the cross-plot.
+function exportCrossPlotSvg() { exportPlotSvg('plot-canvas', 'cross-plot.svg'); }
+function exportCrossPlotPng(scale) { exportPlotPng('plot-canvas', 'cross-plot.png', scale); }
 
 // Maps a "color by"/"shape by" select value to the matching plotState.filters key.
 function filterDimFor(by) {

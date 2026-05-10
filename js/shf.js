@@ -1985,7 +1985,12 @@ function _renderShfPlot(points) {
     }
   }
 
-  _renderShfColorBar(_colorMetricLabel(colorBy) + '  (log)', legendLo, legendHi, colorBarTicks);
+  _renderShfColorBarInSvg(svg, W, H, M,
+    _colorMetricLabel(colorBy) + ' (log)', legendLo, legendHi, colorBarTicks);
+  // The HTML legend slot below the canvas is no longer used — clear it so
+  // the colorbar appears only inside the plot frame.
+  const htmlLegend = document.getElementById('shf-legend');
+  if (htmlLegend) htmlLegend.innerHTML = '';
 }
 
 // Pick `n` reference points equally log-spaced in `metric` over the
@@ -2037,50 +2042,104 @@ function _shfPickReferencePoints(points, metric, n, lo, hi) {
   return out;
 }
 
-function _renderShfColorBar(label, vMin, vMax, ticks) {
-  const legend = document.getElementById('shf-legend');
-  const wrap = document.createElement('div');
-  wrap.className = 'shf-legend-wrap';
+// Render the colorbar legend INSIDE the SVG, below the x-axis title.
+// Layout: [TITLE] [vMin] [================ gradient ===============] [vMax]
+// Width-fills the data area; min/max numbers are right/left-aligned to bar.
+// Grows the SVG viewBox to fit (adds bottom padding so nothing is clipped).
+function _renderShfColorBarInSvg(svg, W, H, M, label, vMin, vMax, ticks) {
+  const startY = H + 4;          // top of legend strip (below x-label)
+  const barH = 8;                 // gradient bar thickness
+  const numFontSize = 10;
+  const titleFontSize = 9;
+  const textY = startY + 11;      // baseline for text + numbers
+  const barY = startY + 4;
 
-  const titleEl = document.createElement('span');
-  titleEl.className = 'shf-legend-title';
-  titleEl.textContent = label;
-  wrap.appendChild(titleEl);
+  const lg = svgEl('g', { class: 'shf-bar-legend' }, svg);
 
-  const minEl = document.createElement('span');
-  minEl.className = 'shf-legend-num';
+  // Title (left-aligned at the data area's left edge)
+  const titleEl = svgEl('text', {
+    x: M.left, y: textY,
+    'font-size': titleFontSize,
+    'font-family': 'IBM Plex Mono, monospace',
+    'letter-spacing': '1.4',
+    fill: '#7c7461',
+  }, lg);
+  titleEl.textContent = String(label || '').toUpperCase();
+  let titleWidth = 0;
+  try { titleWidth = titleEl.getBBox().width; } catch (e) {}
+
+  // Min number (right after title)
+  const minX = M.left + titleWidth + 12;
+  const minEl = svgEl('text', {
+    x: minX, y: textY,
+    'font-size': numFontSize,
+    'font-family': 'IBM Plex Mono, monospace',
+    fill: '#3a3528',
+  }, lg);
   minEl.textContent = fmtTick(vMin);
-  wrap.appendChild(minEl);
+  let minWidth = 0;
+  try { minWidth = minEl.getBBox().width; } catch (e) {}
 
-  // Bar-with-ticks: position absolute child markers over the gradient at
-  // their normalised t. Each marker is a small triangle pointing at the
-  // bar plus a tiny label below.
-  const barWrap = document.createElement('span');
-  barWrap.className = 'shf-legend-barwrap';
-  const swatches = document.createElement('span');
-  swatches.className = 'shf-legend-bar';
-  const N = 32;
-  for (let i = 0; i < N; i++) {
-    const s = document.createElement('span');
-    s.style.background = _rainbowColor(i / (N - 1));
-    swatches.appendChild(s);
+  // Max number (right-anchored to right edge of plot)
+  const maxEl = svgEl('text', {
+    x: W - M.right, y: textY,
+    'font-size': numFontSize,
+    'font-family': 'IBM Plex Mono, monospace',
+    fill: '#3a3528',
+    'text-anchor': 'end',
+  }, lg);
+  maxEl.textContent = fmtTick(vMax);
+  let maxWidth = 0;
+  try { maxWidth = maxEl.getBBox().width; } catch (e) {}
+
+  // Gradient bar — fills the gap between the min and max numbers.
+  const barX = minX + minWidth + 8;
+  const barXEnd = W - M.right - maxWidth - 8;
+  const barW = Math.max(20, barXEnd - barX);
+
+  const defs = svg.querySelector('defs') || svgEl('defs', null, svg);
+  const gradId = 'shf-rainbow-' + Math.floor(Math.random() * 1e9);
+  const grad = svgEl('linearGradient', {
+    id: gradId, x1: '0', y1: '0', x2: '1', y2: '0',
+  }, defs);
+  const N = 12;
+  for (let i = 0; i <= N; i++) {
+    svgEl('stop', {
+      offset: (i / N * 100).toFixed(2) + '%',
+      'stop-color': _rainbowColor(i / N),
+    }, grad);
   }
-  barWrap.appendChild(swatches);
+  svgEl('rect', {
+    x: barX, y: barY,
+    width: barW, height: barH,
+    fill: 'url(#' + gradId + ')',
+    rx: 1,
+    stroke: '#5a5142', 'stroke-width': 0.4,
+  }, lg);
+
+  // Tick markers — small triangles below the bar pointing up at the
+  // gradient at the data line's color position.
   if (Array.isArray(ticks)) {
     for (const tk of ticks) {
-      const mark = document.createElement('span');
-      mark.className = 'shf-legend-tick';
-      mark.style.left = (tk.t * 100).toFixed(2) + '%';
-      mark.title = tk.label;
-      barWrap.appendChild(mark);
+      const tx = barX + Math.max(0, Math.min(1, tk.t)) * barW;
+      const tri = svgEl('polygon', {
+        points: tx + ',' + (barY + barH + 1) + ' '
+              + (tx - 2.5) + ',' + (barY + barH + 5) + ' '
+              + (tx + 2.5) + ',' + (barY + barH + 5),
+        fill: '#3a3528',
+      }, lg);
+      if (tk.label) {
+        const t = svgEl('title', null, tri);
+        t.textContent = tk.label;
+      }
     }
   }
-  wrap.appendChild(barWrap);
 
-  const maxEl = document.createElement('span');
-  maxEl.className = 'shf-legend-num';
-  maxEl.textContent = fmtTick(vMax);
-  wrap.appendChild(maxEl);
-
-  legend.appendChild(wrap);
+  // Grow the SVG viewBox to include the legend (with a few pixels of
+  // bottom padding so the tick triangles aren't pressed into the edge).
+  const desiredH = startY + barH + 10;
+  const currentVbH = svg.viewBox.baseVal.height;
+  if (desiredH > currentVbH) {
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + desiredH);
+  }
 }

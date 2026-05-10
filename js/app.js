@@ -414,6 +414,8 @@ document.getElementById('cross-color').addEventListener('change', refreshPlotPan
 document.getElementById('cross-shape').addEventListener('change', refreshPlotPanel);
 document.getElementById('export-svg-btn').addEventListener('click', () => exportCrossPlotSvg());
 document.getElementById('export-png-btn').addEventListener('click', () => exportCrossPlotPng(3));
+document.getElementById('shf-export-svg-btn').addEventListener('click', () => exportPlotSvg('shf-canvas', 'shf-plot.svg'));
+document.getElementById('shf-export-png-btn').addEventListener('click', () => exportPlotPng('shf-canvas', 'shf-plot.png', 3));
 document.getElementById('reg-add-btn').addEventListener('click', () => {
   // Add always creates a new regression from the current filters using the current
   // Order/Name input values. After adding, that new regression becomes active.
