@@ -394,6 +394,33 @@ function regRecomputeR2(r) {
   r.r2 = rSquared(xs, ys, r.coeffs);
 }
 
+// Build a small unicolor lock SVG icon (currentColor stroke). Avoids the
+// coloured 🔒 / 🔓 emoji which look out of place against the rest of the UI.
+function _makeLockIcon(locked) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 14 14');
+  svg.setAttribute('width', '13');
+  svg.setAttribute('height', '13');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.3');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  const body = document.createElementNS(ns, 'rect');
+  body.setAttribute('x', '3'); body.setAttribute('y', '6.5');
+  body.setAttribute('width', '8'); body.setAttribute('height', '6');
+  body.setAttribute('rx', '1');
+  svg.appendChild(body);
+  const shackle = document.createElementNS(ns, 'path');
+  // Closed → arch sits down on top of the body. Open → arch tilts up-and-right.
+  shackle.setAttribute('d', locked
+    ? 'M 4.5 6.5 V 4.5 a 2.5 2.5 0 0 1 5 0 V 6.5'
+    : 'M 4.5 6.5 V 4.5 a 2.5 2.5 0 0 1 5 0');
+  svg.appendChild(shackle);
+  return svg;
+}
+
 function rebuildRegActiveDetail() {
   const box = document.getElementById('reg-active-detail');
   const r = regState.list.find(x => x.id === regState.activeId);
@@ -408,19 +435,6 @@ function rebuildRegActiveDetail() {
   }
   box.classList.add('open');
   box.innerHTML = '';
-
-  // Header strip with the regression name and color cue
-  const head = document.createElement('div');
-  head.className = 'reg-detail-head';
-  const sw = document.createElement('span');
-  sw.className = 'reg-detail-swatch';
-  sw.style.background = r.color;
-  head.appendChild(sw);
-  const headTxt = document.createElement('span');
-  headTxt.className = 'reg-detail-head-txt';
-  headTxt.textContent = r.name;
-  head.appendChild(headTxt);
-  box.appendChild(head);
 
   // Stats strip: n, R², phi range, degree. The n / r² cells carry data-stat so
   // a manual coefficient edit can patch them in place without a full rebuild
@@ -446,61 +460,41 @@ function rebuildRegActiveDetail() {
   statCell('degree', String(r.degree));
   box.appendChild(stats);
 
-  // Petrel equation, monospaced, copy-friendly
+  // Equation row: Petrel formula on the left, regression name + swatch
+  // ("description") on the right — replaces the standalone header that used
+  // to live above the stats strip.
+  const eqRow = document.createElement('div');
+  eqRow.className = 'reg-detail-eq-row';
   const eq = document.createElement('div');
   eq.className = 'reg-detail-eq';
   eq.textContent = petrelFormula(r.coeffs);
-  box.appendChild(eq);
+  eqRow.appendChild(eq);
+  const head = document.createElement('div');
+  head.className = 'reg-detail-head';
+  const sw = document.createElement('span');
+  sw.className = 'reg-detail-swatch';
+  sw.style.background = r.color;
+  head.appendChild(sw);
+  const headTxt = document.createElement('span');
+  headTxt.className = 'reg-detail-head-txt';
+  headTxt.textContent = r.name;
+  head.appendChild(headTxt);
+  eqRow.appendChild(head);
+  box.appendChild(eqRow);
 
-  // Coefficients section: lock toggle + per-coefficient inputs + reset.
-  // Inputs are disabled while locked so the curve stays tied to the fit; once
-  // unlocked the user can hand-tune the polynomial. Reset always restores the
-  // last fitted snapshot regardless of lock state.
-  const coefHead = document.createElement('div');
-  coefHead.className = 'reg-detail-section-head reg-detail-coef-head';
-  const coefHeadLabel = document.createElement('span');
-  coefHeadLabel.textContent = 'Coefficients';
-  coefHead.appendChild(coefHeadLabel);
-  const lockBtn = document.createElement('button');
-  lockBtn.type = 'button';
-  lockBtn.className = 'reg-detail-lock-btn' + (r.locked ? '' : ' unlocked');
-  lockBtn.title = r.locked ? 'Locked. Click to enable manual editing.' : 'Unlocked. Click to lock.';
-  lockBtn.setAttribute('aria-label', r.locked ? 'Unlock coefficients' : 'Lock coefficients');
-  lockBtn.textContent = r.locked ? '🔒' : '🔓';
-  lockBtn.addEventListener('click', () => {
-    r.locked = !r.locked;
-    rebuildRegActiveDetail();
-    Projects.saveDebounced();
-  });
-  coefHead.appendChild(lockBtn);
-  const resetBtn = document.createElement('button');
-  resetBtn.type = 'button';
-  resetBtn.className = 'plot-reg-btn reg-detail-reset-btn';
-  resetBtn.textContent = 'Reset to fit';
-  resetBtn.title = 'Restore the originally fitted coefficient values';
-  resetBtn.addEventListener('click', () => {
-    r.coeffs = r.fittedCoeffs.slice();
-    r.locked = true;
-    regRecomputeR2(r);
-    rebuildRegList();
-    rebuildRegActiveDetail();
-    refreshPlotPanel();
-    Projects.saveDebounced();
-  });
-  coefHead.appendChild(resetBtn);
-  box.appendChild(coefHead);
-
-  const coefRows = document.createElement('div');
-  coefRows.className = 'reg-detail-coefs';
-  const COEF_LABEL = ['a₀', 'a₁', 'a₂', 'a₃', 'a₄', 'a₅'];
-  const TERM_SUFFIX = ['', ' · PHIE', ' · PHIE²', ' · PHIE³', ' · PHIE⁴', ' · PHIE⁵'];
+  // Coefficients: short labels (Constant, PHIE, PHIE², …) instead of the
+  // confusing "a0 · PHIE^0" notation. Inputs + lock + reset all share one
+  // wrapping flex row so the section reads as one compact tool strip.
+  const coefRow = document.createElement('div');
+  coefRow.className = 'reg-detail-coefs';
+  const TERM_LABEL = ['Constant', 'PHIE', 'PHIE²', 'PHIE³', 'PHIE⁴', 'PHIE⁵'];
   for (let i = 0; i < r.coeffs.length; i++) {
-    const row = document.createElement('div');
-    row.className = 'reg-detail-coef-row';
+    const cell = document.createElement('span');
+    cell.className = 'reg-detail-coef-cell';
     const lab = document.createElement('span');
     lab.className = 'reg-detail-coef-lbl';
-    lab.textContent = (COEF_LABEL[i] || ('a' + i)) + (TERM_SUFFIX[i] || (' · PHIE^' + i));
-    row.appendChild(lab);
+    lab.textContent = TERM_LABEL[i] || ('PHIE^' + i);
+    cell.appendChild(lab);
     const inp = document.createElement('input');
     inp.type = 'number';
     inp.step = 'any';
@@ -512,7 +506,6 @@ function rebuildRegActiveDetail() {
       if (!isFinite(v)) return;
       r.coeffs[i] = v;
       regRecomputeR2(r);
-      // Patch the stat + equation displays in place to preserve input focus.
       const eqEl = box.querySelector('.reg-detail-eq');
       if (eqEl) eqEl.textContent = petrelFormula(r.coeffs);
       const r2El = box.querySelector('[data-stat="r2"]');
@@ -522,15 +515,61 @@ function rebuildRegActiveDetail() {
       refreshPlotPanel();
       Projects.saveDebounced();
     });
-    row.appendChild(inp);
-    coefRows.appendChild(row);
+    cell.appendChild(inp);
+    coefRow.appendChild(cell);
   }
-  box.appendChild(coefRows);
+  // Lock toggle + Reset live in the same flex row as the coefficient inputs
+  // — a margin-left:auto on the lock pushes them to the right edge.
+  const lockBtn = document.createElement('button');
+  lockBtn.type = 'button';
+  lockBtn.className = 'reg-detail-lock-btn' + (r.locked ? '' : ' unlocked');
+  lockBtn.title = r.locked ? 'Locked. Click to enable manual editing.' : 'Unlocked. Click to lock.';
+  lockBtn.setAttribute('aria-label', r.locked ? 'Unlock coefficients' : 'Lock coefficients');
+  lockBtn.appendChild(_makeLockIcon(r.locked));
+  lockBtn.addEventListener('click', () => {
+    r.locked = !r.locked;
+    rebuildRegActiveDetail();
+    Projects.saveDebounced();
+  });
+  coefRow.appendChild(lockBtn);
+  const resetBtn = document.createElement('button');
+  resetBtn.type = 'button';
+  resetBtn.className = 'reg-detail-reset-btn';
+  resetBtn.textContent = 'Reset';
+  // Reset is meaningless while locked (coeffs must equal fittedCoeffs) and
+  // confusing too — disable it so the lock state is the single source of
+  // truth for "is this curve editable right now?".
+  resetBtn.disabled = !!r.locked;
+  resetBtn.title = r.locked
+    ? 'Unlock to enable Reset'
+    : 'Restore the originally fitted coefficient values';
+  resetBtn.addEventListener('click', () => {
+    if (resetBtn.disabled) return;
+    r.coeffs = r.fittedCoeffs.slice();
+    r.locked = true;
+    regRecomputeR2(r);
+    rebuildRegList();
+    rebuildRegActiveDetail();
+    refreshPlotPanel();
+    Projects.saveDebounced();
+  });
+  coefRow.appendChild(resetBtn);
+  box.appendChild(coefRow);
 
-  // Locked filters section
+  // Locked filters section header carries a compact inline Apply button,
+  // replacing the wide standalone button that used to sit at the bottom.
   const filtHead = document.createElement('div');
-  filtHead.className = 'reg-detail-section-head';
-  filtHead.textContent = 'Locked filters';
+  filtHead.className = 'reg-detail-section-head reg-detail-filt-head';
+  const filtHeadLbl = document.createElement('span');
+  filtHeadLbl.textContent = 'Locked filters';
+  filtHead.appendChild(filtHeadLbl);
+  const apply = document.createElement('button');
+  apply.type = 'button';
+  apply.className = 'reg-detail-apply';
+  apply.textContent = 'Apply';
+  apply.title = 'Restore the locked filters into the live filter chips';
+  apply.addEventListener('click', () => regApplyFilters(r.id));
+  filtHead.appendChild(apply);
   box.appendChild(filtHead);
 
   const filtBody = document.createElement('div');
@@ -569,12 +608,4 @@ function rebuildRegActiveDetail() {
   filtRow('Zones', [...r.filters.zones]);
   filtRow('Facies', [...r.filters.facies], true);
   box.appendChild(filtBody);
-
-  // Apply filters action button
-  const apply = document.createElement('button');
-  apply.className = 'plot-reg-btn reg-detail-apply';
-  apply.textContent = 'Apply these filters';
-  apply.title = 'Restore the locked filters into the live filter chips';
-  apply.addEventListener('click', () => regApplyFilters(r.id));
-  box.appendChild(apply);
 }

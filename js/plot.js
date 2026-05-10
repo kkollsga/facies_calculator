@@ -602,6 +602,15 @@ function _positionAndShowPicker(pop, anchor) {
   }, 0);
 }
 
+function _hexToRgba(hex, alpha) {
+  const h = String(hex).replace('#', '');
+  if (h.length !== 6) return hex;
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}
+
 function showColorPicker(anchor, currentColor, onPick, onReset) {
   _dismissPicker();
   const pop = document.createElement('div');
@@ -612,7 +621,10 @@ function showColorPicker(anchor, currentColor, onPick, onReset) {
     const cell = document.createElement('button');
     cell.type = 'button';
     cell.className = 'style-picker-color-cell';
-    cell.style.background = hex;
+    // Match the plot point styling: semi-transparent fill + solid outline
+    // in the same hex, so the swatch previews exactly what the user gets.
+    cell.style.background = _hexToRgba(hex, 0.45);
+    cell.style.borderColor = hex;
     cell.title = hex;
     if (currentColor && String(currentColor).toLowerCase() === hex.toLowerCase()) cell.classList.add('active');
     cell.addEventListener('click', () => { onPick(hex); _dismissPicker(); });
@@ -902,18 +914,16 @@ function renderCrossPlot(points) {
     }
   }
 
-  // Legend: color first, then shape (if used).
-  //
-  // Interaction model:
-  //  - Click swatch / shape icon  → opens a color or shape picker popover.
-  //    Custom selections are persisted globally (state.customStyles) so they
-  //    follow the same value across projects (like facies labels).
-  //  - Click label                 → toggles the underlying filter chip for
-  //    that value. Hidden entries stay in the legend (dimmed) so the toggle
-  //    can be reversed without leaving the legend.
-  const legend = document.getElementById('plot-legend');
+  // Color + shape legend now lives INSIDE the plot SVG below the x-axis
+  // title, so it's part of the plot frame and gets included in SVG/PNG
+  // exports. Entries are laid out left-to-right and wrap at the right
+  // margin. The HTML #plot-legend is left empty for cross-plot mode.
   function colorLabel(k) {
     if (colorBy === 'facies' && lastLabels && lastLabels.get(k)) return lastLabels.get(k) + ' (F' + k + ')';
+    return String(k);
+  }
+  function shapeLabel(k) {
+    if (shapeBy === 'facies' && lastLabels && lastLabels.get(k)) return lastLabels.get(k) + ' (F' + k + ')';
     return String(k);
   }
   function isHidden(dim, key) {
@@ -927,72 +937,113 @@ function renderCrossPlot(points) {
     refreshPlotPanel();
     Projects.saveDebounced();
   }
-  for (const k of colorKeys) {
-    const item = document.createElement('span');
-    item.className = 'plot-legend-item' + (isHidden(colorDim, k) ? ' hidden' : '');
-    // Render the swatch as a tiny SVG circle via the same makeShape used for
-    // plot points, so the legend visually matches what's drawn (transparent
-    // fill + darker outline) instead of being a flat solid block.
-    const sw = document.createElement('span');
-    sw.className = 'plot-legend-swatch plot-legend-swatch-clickable';
-    sw.title = 'Pick color';
-    const swSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    swSvg.setAttribute('viewBox', '-7 -7 14 14');
-    swSvg.setAttribute('width', '14'); swSvg.setAttribute('height', '14');
-    swSvg.appendChild(makeShape(0, 0, 0, colorMap.get(k), 0.45));
-    sw.appendChild(swSvg);
-    sw.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (!colorDim) return;
-      showColorPicker(sw, colorMap.get(k),
-        (hex) => { setCustomColor(colorDim, k, hex); refreshPlotPanel(); },
-        () => { clearCustomColor(colorDim, k); refreshPlotPanel(); }
-      );
-    });
-    const txt = document.createElement('span');
-    txt.className = 'plot-legend-label';
-    txt.title = 'Toggle visibility';
-    txt.textContent = colorLabel(k);
-    txt.addEventListener('click', () => toggleVisibility(colorDim, k));
-    item.appendChild(sw); item.appendChild(txt);
-    legend.appendChild(item);
-  }
-  if (shapeBy) {
-    // small separator
-    const sep = document.createElement('span');
-    sep.style.cssText = 'color:var(--ink-soft);';
-    sep.textContent = '|';
-    legend.appendChild(sep);
-    function shapeLabel(k) {
-      if (shapeBy === 'facies' && lastLabels && lastLabels.get(k)) return lastLabels.get(k) + ' (F' + k + ')';
-      return String(k);
+
+  if (colorKeys.length > 0 || (shapeBy && shapeKeys.length > 0)) {
+    const bottomLg = svgEl('g', { class: 'in-plot-bottom-legend' }, svg);
+    const entries = [];
+
+    function buildColorEntry(k) {
+      const g = svgEl('g', {
+        class: 'in-plot-bot-color',
+        opacity: isHidden(colorDim, k) ? 0.4 : 1,
+      });
+      const swG = svgEl('g', { cursor: 'pointer' }, g);
+      swG.appendChild(makeShape(0, 0, 0, colorMap.get(k), 0.45));
+      swG.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!colorDim) return;
+        showColorPicker(swG, colorMap.get(k),
+          (hex) => { setCustomColor(colorDim, k, hex); refreshPlotPanel(); },
+          () => { clearCustomColor(colorDim, k); refreshPlotPanel(); }
+        );
+      });
+      const txt = svgEl('text', {
+        x: 8, y: 3.5,
+        'font-size': 10.5, 'font-family': 'IBM Plex Sans, sans-serif',
+        fill: '#3a3528', cursor: 'pointer',
+      }, g);
+      txt.textContent = colorLabel(k);
+      txt.addEventListener('click', () => toggleVisibility(colorDim, k));
+      return g;
     }
-    for (const k of shapeKeys) {
-      const item = document.createElement('span');
-      item.className = 'plot-legend-item plot-legend-shape' + (isHidden(shapeDim, k) ? ' hidden' : '');
-      const wrap = document.createElement('span');
-      wrap.className = 'plot-legend-shape-icon';
-      wrap.title = 'Pick shape';
-      const mini = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      mini.setAttribute('viewBox', '-7 -7 14 14');
-      mini.setAttribute('width', '14'); mini.setAttribute('height', '14');
-      mini.appendChild(makeShape(shapeMap.get(k) || 0, 0, 0, '#3a3528', 0.85));
-      wrap.appendChild(mini);
-      wrap.addEventListener('click', (e) => {
+
+    function buildShapeEntry(k) {
+      const g = svgEl('g', {
+        class: 'in-plot-bot-shape',
+        opacity: isHidden(shapeDim, k) ? 0.4 : 1,
+      });
+      const swG = svgEl('g', { cursor: 'pointer' }, g);
+      swG.appendChild(makeShape(shapeMap.get(k) || 0, 0, 0, '#3a3528', 0.85));
+      swG.addEventListener('click', (e) => {
         e.stopPropagation();
         if (!shapeDim) return;
-        showShapePicker(wrap, shapeMap.get(k),
+        showShapePicker(swG, shapeMap.get(k),
           (idx) => { setCustomShape(shapeDim, k, idx); refreshPlotPanel(); },
           () => { clearCustomShape(shapeDim, k); refreshPlotPanel(); }
         );
       });
-      const txt = document.createElement('span');
-      txt.className = 'plot-legend-label';
-      txt.title = 'Toggle visibility';
+      const txt = svgEl('text', {
+        x: 8, y: 3.5,
+        'font-size': 10.5, 'font-family': 'IBM Plex Sans, sans-serif',
+        fill: '#3a3528', cursor: 'pointer',
+      }, g);
       txt.textContent = shapeLabel(k);
       txt.addEventListener('click', () => toggleVisibility(shapeDim, k));
-      item.appendChild(wrap); item.appendChild(txt);
-      legend.appendChild(item);
+      return g;
+    }
+
+    // Build entries (color first, separator, then shape if used)
+    for (const k of colorKeys) {
+      const g = buildColorEntry(k);
+      bottomLg.appendChild(g);
+      entries.push({ g, type: 'item' });
+    }
+    if (shapeBy && shapeKeys.length > 0 && colorKeys.length > 0) {
+      const sepG = svgEl('g', { class: 'in-plot-bot-sep' }, bottomLg);
+      const sepTxt = svgEl('text', {
+        x: 0, y: 3.5,
+        'font-size': 11, fill: '#a39a85',
+      }, sepG);
+      sepTxt.textContent = '|';
+      entries.push({ g: sepG, type: 'sep' });
+    }
+    if (shapeBy) {
+      for (const k of shapeKeys) {
+        const g = buildShapeEntry(k);
+        bottomLg.appendChild(g);
+        entries.push({ g, type: 'item' });
+      }
+    }
+
+    // Layout: row-wrap left to right, starting just below the x-axis title.
+    // The xLabel sits at y = H - 8 (font-size 11) so its baseline ends near
+    // y = H - 4. We start the legend a few px below that.
+    const startY = H + 12;
+    const startX = M.left;
+    const endX = W - M.right;
+    const lineH = 18;
+    const itemGap = 14, sepGap = 10;
+    let curX = startX, curY = startY;
+
+    for (const e of entries) {
+      let w = 0;
+      try { w = e.g.getBBox().width; } catch (err) { w = 0; }
+      const advance = w + (e.type === 'sep' ? sepGap : itemGap);
+      // Wrap if we're past the right margin (but not at start of row)
+      if (curX + w > endX && curX > startX) {
+        curY += lineH;
+        curX = startX;
+      }
+      e.g.setAttribute('transform', 'translate(' + curX + ', ' + curY + ')');
+      curX += advance;
+    }
+
+    // Grow viewBox to fit the legend (taking into account any earlier growth
+    // from the in-plot reg legend so we don't accidentally shrink it).
+    const desiredH = curY + lineH;
+    const currentVbH = svg.viewBox.baseVal.height;
+    if (desiredH > currentVbH) {
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + desiredH);
     }
   }
 
